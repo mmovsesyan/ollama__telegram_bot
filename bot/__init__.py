@@ -1,6 +1,11 @@
 from bot.ollama.api import validate_installation_with_configuration
-from bot.settings import OLLAMA_MODEL
+from bot.settings import OLLAMA_MODEL, DB_PATH
+from bot.db import Database
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import aiohttp
+from datetime import datetime
 
 async def main() -> None:
     # Pre validate required model and overall ollama health.
@@ -8,9 +13,71 @@ async def main() -> None:
 
     from bot.bot import bot as aiogram_bot
     from bot.bot import dp
-    from bot.routers import completion, start
+    from bot.routers import start, completion, cron
 
-    dp.include_routers(start.router, completion.router)
+    # Init database
+    db = Database(DB_PATH)
+
+    # Inject db into routers
+    completion.db = db
+    cron.db = db
+
+    dp.include_routers(start.router, completion.router, cron.router)
+
+    # Setup scheduler
+    scheduler = AsyncIOScheduler()
+
+    async def check_reminders():
+        now = datetime.now().isoformat()
+        reminders = db.get_pending_reminders(now)
+        for r in reminders:
+            try:
+                await aiogram_bot.send_message(
+                    chat_id=r['user_id'],
+                    text=f"⏰ Напоминание #{r['id']}:\n{r['content']}"
+                )
+                db.disable_reminder(r['id'])
+            except Exception as e:
+                print(f"[CRON] Failed to send reminder {r['id']}: {e}")
+
+    async def check_monitors():
+        monitors = db.get_all_active_monitors()
+        async with aiohttp.ClientSession() as session:
+            for m in monitors:
+                try:
+                    async with session.request(
+                        method=m.get('method', 'GET'),
+                        url=m['url'],
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        status = response.status
+                        db.update_monitor_status(m['id'], status)
+                        if status != m.get('expected_status', 200):
+                            try:
+                                await aiogram_bot.send_message(
+                                    chat_id=m['user_id'],
+                                    text=f"🚨 ALERT #{m['id']}: {m['name']}\n"
+                                         f"URL: {m['url']}\n"
+                                         f"Expected HTTP {m.get('expected_status', 200)}, got HTTP {status}"
+                                )
+                            except Exception as send_err:
+                                print(f"[CRON] Failed alert: {send_err}")
+                except Exception as e:
+                    db.update_monitor_status(m['id'], 0)
+                    try:
+                        await aiogram_bot.send_message(
+                            chat_id=m['user_id'],
+                            text=f"🚨 ALERT #{m['id']}: {m['name']}\n"
+                                 f"URL: {m['url']}\n"
+                                 f"Error: {str(e)[:200]}"
+                        )
+                    except Exception as send_err:
+                        print(f"[CRON] Failed alert: {send_err}")
+
+    scheduler.add_job(check_reminders, IntervalTrigger(seconds=30), id="reminders", replace_existing=True)
+    scheduler.add_job(check_monitors, IntervalTrigger(seconds=60), id="monitors", replace_existing=True)
+    scheduler.start()
+
     print(f"[OLLAMA] Selected base model -> {OLLAMA_MODEL}")
     print("[BOT] Start polling...")
-    await dp.start_polling(aiogram_bot)  # type: ignore
+    await dp.start_polling(aiogram_bot)

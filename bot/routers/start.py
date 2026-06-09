@@ -10,6 +10,12 @@ router = Router()
 @router.message(CommandStart())
 async def start_command(message: Message) -> None:
     await message.answer(
-        "Welcome, please write something to me! (/translate_on, /translate_off, /models, /model_set)",
+        "Привет! Я AI-бот на базе Ollama.\n\n"
+        "Команды:\n"
+        "/models — список доступных моделей\n"
+        "/model <name> — сменить модель\n"
+        "/clear — очистить историю\n"
+        "/help — помощь\n\n"
+        "Напишите что угодно, чтобы начать разговор.",
         reply_markup=base_keyboard,
     )
