@@ -24,3 +24,19 @@ OLLAMA_KEEP_ALIVE = "5m"
 
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
+
+# Compaction: summarize every N user+assistant messages
+COMPACTION_EVERY_N = int(os.getenv("COMPACTION_EVERY_N", default="8"))
+
+# Prompt used for summarization
+SUMMARY_PROMPT = os.getenv(
+    "SUMMARY_PROMPT",
+    default=(
+        "Проанализируй следующий диалог и создай краткую выжимку, сохраняя:\n"
+        "- ключевые факты и решения\n"
+        "- предпочтения пользователя\n"
+        "- важный контекст для будущих сообщений\n"
+        "- нерешённые вопросы или задачи\n\n"
+        "Ответь ТОЛЬКО текстом выжимки, без вступлений."
+    ),
+)

@@ -66,8 +66,26 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    category TEXT DEFAULT 'fact',
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+                CREATE INDEX IF NOT EXISTS idx_summaries_session ON summaries(session_id);
+                CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
             """)
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
@@ -232,4 +250,63 @@ class Database:
     def remove_monitor(self, monitor_id: int):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM monitors WHERE id = ?", (monitor_id,))
+            conn.commit()
+
+    def add_summary(self, session_id: int, message_count: int, summary: str) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO summaries (session_id, message_count, summary) VALUES (?, ?, ?)",
+                (session_id, message_count, summary)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_latest_summary(self, session_id: int) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM summaries WHERE session_id = ? ORDER BY message_count DESC LIMIT 1",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def get_all_summaries(self, session_id: int) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM summaries WHERE session_id = ? ORDER BY message_count ASC",
+                (session_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def add_memory(self, user_id: int, category: str, content: str) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO memories (user_id, category, content) VALUES (?, ?, ?)",
+                (user_id, category, content)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_memories(self, user_id: int, category: str | None = None) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if category:
+                cursor = conn.execute(
+                    "SELECT * FROM memories WHERE user_id = ? AND category = ? ORDER BY created_at DESC",
+                    (user_id, category)
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM memories WHERE user_id = ? ORDER BY created_at DESC",
+                    (user_id,)
+                )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def remove_memory(self, memory_id: int):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             conn.commit()

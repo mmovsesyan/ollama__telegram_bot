@@ -225,4 +225,76 @@ async def cmd_report(message: Message):
     if notes:
         text += f"\nЗаметки:\n{notes}"
 
+    memories = db.get_memories(message.from_user.id)
+    if memories:
+        text += f"\nПамять: {len(memories)} фактов"
+
     await message.answer(text)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/memory_add"))
+async def cmd_memory_add(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /memory_add [<category>] <content>\n"
+            "Категории: fact, preference, task, decision\n"
+            "Пример: /memory_add preference люблю кофе\n"
+            "Пример: /memory_add купить акции TSLA"
+        )
+        return
+
+    if len(parts) == 2:
+        category = "fact"
+        content = parts[1]
+    else:
+        category = parts[1].lower()
+        content = parts[2]
+        if category not in ("fact", "preference", "task", "decision"):
+            category = "fact"
+
+    mid = db.add_memory(message.from_user.id, category, content)
+    await message.answer(f"✅ Факт #{mid} сохранён: [{category}] {content}")
+
+
+@router.message(lambda m: m.text and m.text == "/memory")
+async def cmd_memory(message: Message):
+    if message.from_user is None:
+        return
+
+    memories = db.get_memories(message.from_user.id)
+    if not memories:
+        await message.answer(
+            "Нет сохранённых фактов.\n"
+            "Используй /memory_add <категория> <текст>"
+        )
+        return
+
+    text = "🧠 Память:\n"
+    for m in memories:
+        cat = m.get('category', 'fact')
+        content = m.get('content', '')
+        text += f"#{m['id']} | [{cat}] {content}\n"
+
+    await message.answer(text)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/memory_remove"))
+async def cmd_memory_remove(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /memory_remove <id>")
+        return
+
+    try:
+        mid = int(parts[1])
+        db.remove_memory(mid)
+        await message.answer(f"Факт #{mid} удалён.")
+    except ValueError:
+        await message.answer("Укажите числовой ID.")

@@ -1,6 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from pydantic import BaseModel
+import asyncio
 
 from bot.bot import bot as aiogram_bot
 from bot.keyboards.inline import answer_keyboard
@@ -10,10 +11,12 @@ from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
 from bot.settings import (
     ALLOWED_CHAT_IDS,
+    COMPACTION_EVERY_N,
     MAX_CONTEXT_MESSAGES,
     OLLAMA_MODEL,
     OLLAMA_MODEL_TEMPERATURE,
     START_USER_MESSAGE,
+    SUMMARY_PROMPT,
     SYSTEM_MESSAGE,
 )
 
@@ -178,12 +181,90 @@ async def generate(message: Message, user_id: int, text: str):
     if db and chat.session_id:
         db.save_message(user_id, chat.session_id, "assistant", assistant_content, chat.selected_model)
 
+    # Async compaction after response is sent
+    if db and chat.session_id:
+        asyncio.create_task(_maybe_compact(user_id, chat))
+
 def _trim_context(chat: UserChat) -> None:
     system_messages = [m for m in chat.ollama_chat.messages if m.role == "system"]
     other_messages = [m for m in chat.ollama_chat.messages if m.role != "system"]
     if len(other_messages) > MAX_CONTEXT_MESSAGES:
         other_messages = other_messages[-MAX_CONTEXT_MESSAGES:]
     chat.ollama_chat.messages = system_messages + other_messages
+
+
+async def _maybe_compact(user_id: int, chat: UserChat):
+    if not db or not chat.session_id:
+        return
+
+    # Count only user+assistant messages (excluding system and summaries)
+    non_system = [m for m in chat.ollama_chat.messages if m.role in ("user", "assistant")]
+    total_count = len(non_system)
+
+    if total_count < COMPACTION_EVERY_N:
+        return
+
+    # Check if we already compacted at this count or higher
+    latest_summary = db.get_latest_summary(chat.session_id)
+    if latest_summary and latest_summary.get("message_count", 0) >= total_count:
+        return
+
+    print(f"[COMPACT] Triggered for user {user_id} at {total_count} messages")
+
+    # Build conversation text for summarization
+    conversation_lines = []
+    for m in non_system:
+        role_label = "Пользователь" if m.role == "user" else "Ассистент"
+        conversation_lines.append(f"{role_label}: {m.content}")
+    conversation_text = "\n\n".join(conversation_lines)
+
+    summary_prompt = (
+        f"{SUMMARY_PROMPT}\n\n"
+        f"ДИАЛОГ:\n{conversation_text}\n\n"
+        f"ВЫЖИМКА:"
+    )
+
+    try:
+        summary_messages = [
+            OllamaChatMessage(role="system", content=SYSTEM_MESSAGE),
+            OllamaChatMessage(role="user", content=summary_prompt),
+        ]
+        summary_content = ""
+        async for is_done, chunk in generate_chat_completion(
+            summary_messages,
+            chat.selected_model,
+            temperature=0.3,
+        ):
+            if is_done:
+                break
+            else:
+                if isinstance(chunk, OllamaErrorChunk):
+                    print(f"[COMPACT] Summary error: {chunk.error}")
+                    return
+                summary_content += chunk.message.content
+
+        if not summary_content.strip():
+            print("[COMPACT] Empty summary, skipping")
+            return
+
+        db.add_summary(chat.session_id, total_count, summary_content)
+        print(f"[COMPACT] Saved summary for session {chat.session_id} at {total_count} messages")
+
+        # Rebuild chat context: system + summary + last 2 pairs
+        system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"]
+        summary_msg = OllamaChatMessage(
+            role="system",
+            content=f"[Контекст предыдущего диалога]: {summary_content}"
+        )
+        last_pairs = non_system[-4:]  # keep last 2 user + 2 assistant (or less)
+
+        chat.ollama_chat.messages = system_msgs + [summary_msg] + [
+            OllamaChatMessage(role=m.role, content=m.content) for m in last_pairs
+        ]
+        print(f"[COMPACT] Context rebuilt: {len(chat.ollama_chat.messages)} messages")
+    except Exception as e:
+        print(f"[COMPACT] Failed: {e}")
+
 
 def _delete_chat(user_id: int) -> None:
     if user_id not in chats:
@@ -214,10 +295,31 @@ def _create_chat(user_id: int) -> bool:
         if notes:
             system_content += f"\n\nКонтекст о пользователе:\n{notes}"
 
+        # Load structured memories
+        memories = db.get_memories(user_id)
+        if memories:
+            memory_lines = []
+            for m in memories:
+                cat = m.get('category', 'fact')
+                content = m.get('content', '')
+                memory_lines.append(f"- [{cat}] {content}")
+            system_content += "\n\nВажные факты и предпочтения:\n" + "\n".join(memory_lines)
+
     if system_content:
         chats[user_id].ollama_chat.messages.append(
             OllamaChatMessage(role="system", content=system_content)
         )
+
+    # Load latest summary as additional context
+    if db and session_id:
+        latest_summary = db.get_latest_summary(session_id)
+        if latest_summary and latest_summary.get("summary"):
+            chats[user_id].ollama_chat.messages.append(
+                OllamaChatMessage(
+                    role="system",
+                    content=f"[Контекст предыдущего диалога]: {latest_summary['summary']}"
+                )
+            )
 
     for h in history:
         chats[user_id].ollama_chat.messages.append(
