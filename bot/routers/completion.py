@@ -47,6 +47,21 @@ class UserChat(BaseModel):
     session_id: int | None = None
 
 chats: dict[int, UserChat] = {}
+_typing_last: dict[int, float] = {}
+
+async def _safe_typing(user_id: int):
+    import time
+    now = time.time()
+    if user_id in _typing_last and now - _typing_last[user_id] < 3:
+        return
+    _typing_last[user_id] = now
+    try:
+        await _safe_typing(user_id)
+    except Exception as e:
+        if "Flood control" in str(e) or "Too Many Requests" in str(e):
+            pass
+        else:
+            print(f"[TYPING] Error: {e}")
 
 async def generate(message: Message, user_id: int, text: str):
     if text == "New chat":
@@ -61,15 +76,28 @@ async def generate(message: Message, user_id: int, text: str):
 
     if text == "/help":
         await message.answer(
-            "Команды:\n"
+            "🤖 Команды бота:\n\n"
+            "📋 AI:\n"
             "/models — список моделей\n"
-            "/model <model_name> — сменить модель\n"
-            "/clear — очистить чат\n"
-            "/note — сохранить/показать заметки\n"
-            "/remind — добавить напоминание\n"
-            "/reminders — список напоминаний\n"
-            "/monitor_add — добавить мониторинг\n"
-            "/monitors — список мониторов\n\n"
+            "/model <name> — сменить модель\n"
+            "/clear — очистить историю\n\n"
+            "📝 Заметки и память:\n"
+            "/note <текст> — сохранить заметку\n"
+            "/memory_add [<category>] <текст> — сохранить факт\n"
+            "   категории: fact, preference, task, decision\n"
+            "/memory — показать все факты\n"
+            "/memory_remove <id> — удалить факт\n\n"
+            "⏰ Напоминания:\n"
+            "/remind <время> <текст> — добавить\n"
+            "/reminders — список\n"
+            "/remind_cancel <id> — отменить\n\n"
+            "🔍 Мониторинг:\n"
+            "/monitor_add <name> <url> [<interval>] — добавить\n"
+            "/monitors — список\n"
+            "/monitor_remove <id> — удалить\n\n"
+            "📊 Другое:\n"
+            "/report — ежедневный отчёт\n"
+            "/help — эта справка\n\n"
             "Напишите любое сообщение для разговора с AI."
         )
         return
@@ -95,8 +123,9 @@ async def generate(message: Message, user_id: int, text: str):
         await message.answer("История очищена.")
         return
 
+    is_command = text.startswith("/")
     created = _create_chat(user_id)
-    if created:
+    if created and not is_command:
         await message.answer(f"Чат создан. Модель: {chats[user_id].selected_model}")
 
     chat = chats[user_id]
@@ -166,7 +195,7 @@ async def generate(message: Message, user_id: int, text: str):
                     break
                 assistant_content += chunk.message.content
                 if len(assistant_content) % 100 == 0:
-                    await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+                    await _safe_typing(user_id)
     except Exception as e:
         print(f"[ERROR] Generation failed: {e}")
         await msg.edit_text(f"Произошла ошибка при генерации ответа. Попробуйте ещё раз.\n({str(e)[:200]})")
@@ -249,6 +278,54 @@ async def _maybe_compact(user_id: int, chat: UserChat):
 
         db.add_summary(chat.session_id, total_count, summary_content)
         print(f"[COMPACT] Saved summary for session {chat.session_id} at {total_count} messages")
+
+        # --- Auto memory extraction (OpenClaude-style) ---
+        memory_prompt = (
+            "Проанализируй диалог и извлеки ВАЖНЫЕ факты о пользователе.\n"
+            "Для каждого факта укажи категорию: fact (факт), preference (предпочтение), task (задача), decision (решение).\n"
+            "Ответь ТОЛЬКО в формате (один факт на строку):\n"
+            "[category] content\n"
+            "Если нет важных фактов — напиши \"НЕТ\".\n\n"
+            f"ДИАЛОГ:\n{conversation_text}\n\n"
+            "ФАКТЫ:"
+        )
+        try:
+            memory_messages = [
+                OllamaChatMessage(role="system", content=SYSTEM_MESSAGE),
+                OllamaChatMessage(role="user", content=memory_prompt),
+            ]
+            memory_raw = ""
+            async for is_done, chunk in generate_chat_completion(
+                memory_messages,
+                chat.selected_model,
+                temperature=0.2,
+            ):
+                if is_done:
+                    break
+                else:
+                    if isinstance(chunk, OllamaErrorChunk):
+                        break
+                    memory_raw += chunk.message.content
+
+            if memory_raw.strip() and memory_raw.strip().upper() != "НЕТ":
+                for line in memory_raw.strip().split("\n"):
+                    line = line.strip()
+                    if not line or line.upper() == "НЕТ":
+                        continue
+                    # Parse [category] content
+                    if line.startswith("[") and "]" in line:
+                        close_idx = line.index("]")
+                        category = line[1:close_idx].lower().strip()
+                        content = line[close_idx+1:].strip()
+                        if category in ("fact", "preference", "task", "decision") and content:
+                            # Check for duplicates
+                            existing = db.get_memories(user_id, category)
+                            dup = any(m.get('content','').lower() == content.lower() for m in existing)
+                            if not dup:
+                                db.add_memory(user_id, category, content)
+                                print(f"[MEMORY] Auto-saved: [{category}] {content}")
+        except Exception as mem_err:
+            print(f"[MEMORY] Extraction failed: {mem_err}")
 
         # Rebuild chat context: system + summary + last 2 pairs
         system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"]
