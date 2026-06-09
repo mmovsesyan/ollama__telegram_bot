@@ -3,9 +3,62 @@ from aiogram.types import Message
 import re
 from datetime import datetime, timedelta
 
+import aiohttp
+
 router = Router()
 
 db = None  # injected in __init__
+
+
+async def ollama_web_search(query: str, max_results: int = 5):
+    from bot.settings import OLLAMA_WEB_API_KEY
+    if not OLLAMA_WEB_API_KEY:
+        return None, "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com"
+
+    url = "https://ollama.com/api/web_search"
+    headers = {
+        "Authorization": f"Bearer {OLLAMA_WEB_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {"query": query, "max_results": max_results}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data, None
+                else:
+                    text = await resp.text()
+                    return None, f"HTTP {resp.status}: {text[:200]}"
+    except Exception as e:
+        return None, str(e)
+
+
+async def ollama_web_fetch(url: str):
+    from bot.settings import OLLAMA_WEB_API_KEY
+    if not OLLAMA_WEB_API_KEY:
+        return None, "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com"
+
+    api_url = "https://ollama.com/api/web_fetch"
+    headers = {
+        "Authorization": f"Bearer {OLLAMA_WEB_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {"url": url}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data, None
+                else:
+                    text = await resp.text()
+                    return None, f"HTTP {resp.status}: {text[:200]}"
+    except Exception as e:
+        return None, str(e)
+
 
 async def send_alert(user_id: int, text: str):
     from bot.bot import bot as aiogram_bot
@@ -298,3 +351,176 @@ async def cmd_memory_remove(message: Message):
         await message.answer(f"Факт #{mid} удалён.")
     except ValueError:
         await message.answer("Укажите числовой ID.")
+
+
+@router.message(lambda m: m.text and m.text.startswith("/remind_remove"))
+async def cmd_remind_remove(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /remind_remove <id>")
+        return
+
+    try:
+        rid = int(parts[1])
+        db.disable_reminder(rid)
+        await message.answer(f"Напоминание #{rid} удалено.")
+    except ValueError:
+        await message.answer("Укажите числовой ID.")
+
+
+@router.message(lambda m: m.text and m.text.startswith("/weather"))
+async def cmd_weather(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /weather <город>\nПример: /weather Moscow")
+        return
+
+    city = parts[1].strip()
+    query = f"погода в {city} сейчас"
+    await message.answer(f"🌤 Ищу погоду: {city}...")
+
+    result, error = await ollama_web_search(query, max_results=3)
+    if error:
+        await message.answer(f"❌ {error}")
+        return
+
+    items = result.get("results", [])
+    if not items:
+        await message.answer("Не удалось найти погоду.")
+        return
+
+    text = f"🌤 Погода в {city}:\n\n"
+    for i, item in enumerate(items[:3], 1):
+        title = item.get("title", "")
+        content = item.get("content", "")[:800]
+        url = item.get("url", "")
+        if content:
+            text += f"{content}\n"
+        if url:
+            text += f"{url}\n"
+        text += "\n"
+
+    await message.answer(text[:4096])
+
+
+@router.message(lambda m: m.text and m.text == "/news")
+async def cmd_news(message: Message):
+    if message.from_user is None:
+        return
+
+    await message.answer("📰 Ищу актуальные новости...")
+
+    result, error = await ollama_web_search("последние новости сегодня", max_results=5)
+    if error:
+        await message.answer(f"❌ {error}")
+        return
+
+    items = result.get("results", [])
+    if not items:
+        await message.answer("Новостей не найдено.")
+        return
+
+    text = "📰 Актуальные новости:\n\n"
+    for i, item in enumerate(items[:5], 1):
+        title = item.get("title", "Без названия")
+        url = item.get("url", "")
+        content = item.get("content", "")[:400]
+        text += f"{i}. {title}\n"
+        if content:
+            text += f"   {content}\n"
+        if url:
+            text += f"   {url}\n"
+        text += "\n"
+
+    await message.answer(text[:4096])
+
+
+@router.message(lambda m: m.text and m.text.startswith("/search"))
+async def cmd_search(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /search <запрос>\n"
+            "Пример: /search последние новости о Tesla\n\n"
+            "Требуется OLLAMA_WEB_API_KEY в .env (получить на https://ollama.com)"
+        )
+        return
+
+    query = parts[1].strip()
+    await message.answer(f"🔍 Ищу в интернете: {query}...")
+
+    result, error = await ollama_web_search(query, max_results=5)
+    if error:
+        await message.answer(f"❌ Ошибка поиска: {error}")
+        return
+
+    if not result or "results" not in result:
+        await message.answer("Ничего не найдено.")
+        return
+
+    items = result["results"]
+    if not items:
+        await message.answer("Ничего не найдено.")
+        return
+
+    text = f"🔍 Результаты поиска: {query}\n\n"
+    for i, item in enumerate(items[:5], 1):
+        title = item.get("title", "Без названия")
+        url = item.get("url", "")
+        content = item.get("content", "")[:500]
+        text += f"{i}. {title}\n"
+        if url:
+            text += f"   {url}\n"
+        if content:
+            text += f"   {content}\n"
+        text += "\n"
+
+    await message.answer(text[:4096])
+
+
+@router.message(lambda m: m.text and m.text.startswith("/fetch"))
+async def cmd_fetch(message: Message):
+    if message.from_user is None:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /fetch <url>\n"
+            "Пример: /fetch https://example.com/article\n\n"
+            "Требуется OLLAMA_WEB_API_KEY в .env"
+        )
+        return
+
+    url = parts[1].strip()
+    await message.answer(f"📄 Загружаю: {url}...")
+
+    result, error = await ollama_web_fetch(url)
+    if error:
+        await message.answer(f"❌ Ошибка загрузки: {error}")
+        return
+
+    title = result.get("title", "Без названия")
+    content = result.get("content", "")[:3000]
+    links = result.get("links", [])[:10]
+
+    text = f"📄 {title}\n\n{content}\n"
+    if links:
+        text += "\n🔗 Ссылки на странице:\n"
+        for link in links:
+            text += f"- {link}\n"
+
+    # Telegram limit
+    if len(text) > 4096:
+        text = text[:4090] + "..."
+
+    await message.answer(text)

@@ -22,6 +22,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="llama2:13b-chat")
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
 
+# Ollama Web Search API (https://ollama.com/api/web_search)
+# Get your key at https://ollama.com and set OLLAMA_WEB_API_KEY
+OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="")
+
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 
