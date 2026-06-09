@@ -22,7 +22,8 @@ async def main() -> None:
     completion.db = db
     cron.db = db
 
-    dp.include_routers(start.router, completion.router, cron.router)
+    # Order matters: cron commands must be checked before generic completion handler
+    dp.include_routers(start.router, cron.router, completion.router)
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()

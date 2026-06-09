@@ -12,13 +12,7 @@ class OllamaChat(BaseModel):
 
 
 class OllamaCompletionResponseChunk(BaseModel):
-    """
-    Segment of the completion response
-    """
-
-    # True if completion was generated and this is final chunk
     done: bool
-
     created_at: str
     model: str
     message: OllamaChatMessage
@@ -30,10 +24,11 @@ class OllamaErrorChunk(BaseModel):
 
 class OllamaCompletionFinalChunk(OllamaCompletionResponseChunk):
     context: list[str] | None = None
-    total_duration: int
-    prompt_eval_duration: int
-    eval_count: int
-    eval_duration: int
+    total_duration: int | None = None
+    prompt_eval_duration: int | None = None
+    eval_count: int | None = None
+    eval_duration: int | None = None
+    prompt_eval_count: int | None = None
 
 
 class OllamaModelTagDetails(BaseModel):
