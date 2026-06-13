@@ -5,23 +5,15 @@ from bot.settings import TELEGRAM_TOKEN
 
 dp = Dispatcher()
 
-_bot: Bot | None = None
-
 
 def get_bot() -> Bot:
-    global _bot
-    if _bot is None:
-        if not TELEGRAM_TOKEN:
-            raise RuntimeError("TELEGRAM_TOKEN is not set. Create .env file.")
-        _bot = Bot(token=TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=None))
-    return _bot
+    """Return the real Bot instance. main.py must load .env before importing this module."""
+    return bot
 
 
-# Lazy module-level alias: importing the module does not require a token.
-# Actual Bot instance is created on first attribute access.
-class _LazyBot:
-    def __getattr__(self, name: str):
-        return getattr(get_bot(), name)
+# Real Bot instance for aiogram 3.x compatibility.
+# main.py loads .env into os.environ BEFORE importing bot.bot, so TELEGRAM_TOKEN is always set here.
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN is not set. Create .env file.")
 
-
-bot: Bot = _LazyBot()  # type: ignore[assignment]
+bot: Bot = Bot(token=TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=None))

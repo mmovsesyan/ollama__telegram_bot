@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=%I
 WorkingDirectory=/opt/ollama__telegram_bot
-ExecStart=/usr/bin/bash -lc 'cd /opt/ollama__telegram_bot && poetry run python main.py'
+ExecStart=/usr/bin/bash -lc 'cd /opt/ollama__telegram_bot && set -a && source .env && set +a && poetry run python main.py'
 Restart=always
 RestartSec=5
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%I/.local/bin

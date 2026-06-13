@@ -8,7 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>cd /Users/%USER%/ollama__telegram_bot && poetry run python main.py</string>
+        <string>cd /Users/%USER%/ollama__telegram_bot && set -a && source .env && set +a && poetry run python main.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/%USER%/ollama__telegram_bot</string>

@@ -50,6 +50,12 @@ if __name__ == "__main__":
             print("❌ .env still invalid. Exiting.")
             sys.exit(1)
 
+    # Load .env into os.environ BEFORE importing any bot modules.
+    # bot/bot.py instantiates the real aiogram Bot at import time,
+    # so TELEGRAM_TOKEN must already be available.
+    from dotenv import load_dotenv
+    load_dotenv()
+
     from bot import main
 
     asyncio.run(main())
