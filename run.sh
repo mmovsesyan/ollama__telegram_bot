@@ -16,16 +16,39 @@ ensure_poetry() {
     fi
 }
 
-ensure_env() {
-    if [[ -f "$ENV_FILE" ]]; then
-        read -rp "⚙️  .env уже существует. Пересоздать? [y/N]: " recreate
-        if [[ "${recreate:-}" =~ ^[Yy]$ ]]; then
-            poetry run python setup_env.py
-        fi
-    else
-        echo "⚙️  Создаю .env..."
-        poetry run python setup_env.py
+env_is_valid() {
+    if [[ ! -f "$ENV_FILE" ]]; then
+        return 1
     fi
+    # Check that required keys are present, not placeholder and token is valid
+    local token api_key
+    token=$(grep "^TELEGRAM_TOKEN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '[:space:]')
+    api_key=$(grep "^OLLAMA_API_KEY=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '[:space:]')
+
+    if [[ -z "$token" || -z "$api_key" ]]; then
+        return 1
+    fi
+    if [[ "$token" == *"your_telegram_bot_token_here"* || "$api_key" == *"your_ollama_api_key_here"* ]]; then
+        return 1
+    fi
+    if ! [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+        return 1
+    fi
+    return 0
+}
+
+ensure_env() {
+    if env_is_valid; then
+        return 0
+    fi
+
+    if [[ -f "$ENV_FILE" ]]; then
+        echo "⚠️  .env найден, но отсутствуют или некорректны обязательные ключи."
+        echo "   Пересоздаю .env интерактивно..."
+    else
+        echo "⚙️  .env не найден. Создаю интерактивно..."
+    fi
+    poetry run python setup_env.py
 }
 
 stop_existing() {

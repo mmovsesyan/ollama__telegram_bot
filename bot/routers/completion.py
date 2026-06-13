@@ -357,15 +357,17 @@ async def _maybe_compact(user_id: int, chat: UserChat):
         except Exception as mem_err:
             print(f"[MEMORY] Extraction failed: {mem_err}")
 
-        # Rebuild chat context: system + summary + last 2 pairs
-        system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"]
+        # Rebuild chat context: base system + fresh summary + last 2 pairs
+        # Keep only the first system message (SYSTEM_MESSAGE + notes + memories);
+        # drop old summary messages to avoid accumulation.
+        base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][:1]
         summary_msg = OllamaChatMessage(
             role="system",
             content=f"[Контекст предыдущего диалога]: {summary_content}"
         )
         last_pairs = non_system[-4:]  # keep last 2 user + 2 assistant (or less)
 
-        chat.ollama_chat.messages = system_msgs + [summary_msg] + [
+        chat.ollama_chat.messages = base_system_msgs + [summary_msg] + [
             OllamaChatMessage(role=m.role, content=m.content) for m in last_pairs
         ]
         print(f"[COMPACT] Context rebuilt: {len(chat.ollama_chat.messages)} messages")
@@ -849,7 +851,8 @@ async def answer(message: Message, state: FSMContext) -> None:
                     db.add_note(user_id, arg)
                     await message.answer("Заметка сохранена.")
                 else:
-                    await message.answer("📝 Что записать?")
+                    await state.set_state(BotStates.waiting_note)
+                    await message.answer("📝 Что записать?", reply_markup=cancel_keyboard)
                 return
             if intent == "memory_add":
                 if arg and db:
@@ -862,27 +865,32 @@ async def answer(message: Message, state: FSMContext) -> None:
                     mid = db.add_memory(user_id, cat, content)
                     await message.answer(f"✅ Факт #{mid} сохранён: [{cat}] {content}")
                 else:
-                    await message.answer("🧠 Что запомнить?")
+                    await state.set_state(BotStates.waiting_memory_add)
+                    await state.update_data(memory_category="fact")
+                    await message.answer("🧠 Что запомнить?", reply_markup=cancel_keyboard)
                 return
             if intent == "monitor_add":
+                await state.set_state(BotStates.waiting_monitor_add)
                 await message.answer(
                     "🔍 Введите данные монитора:\n<имя> <url> [интервал]\nПример: Google google.com 5m",
+                    reply_markup=cancel_keyboard,
                 )
                 return
             if intent == "models":
-                await generate(message, user_id, "/models")
+                await cmd_models(message)
                 return
             if intent == "model":
                 if arg:
                     await generate(message, user_id, f"/model {arg}")
                 else:
-                    await message.answer("Укажите модель. Пример: смени модель llama3")
+                    await state.set_state(BotStates.waiting_model)
+                    await message.answer("Укажите модель. Пример: llama3", reply_markup=cancel_keyboard)
                 return
             if intent == "clear":
-                await generate(message, user_id, "/clear")
+                await cmd_clear(message)
                 return
             if intent == "help":
-                await generate(message, user_id, "/help")
+                await cmd_help(message)
                 return
 
     except Exception as e:

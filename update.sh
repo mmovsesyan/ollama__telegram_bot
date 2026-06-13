@@ -7,6 +7,9 @@ LOG_FILE="$APP_DIR/bot.log"
 
 cd "$APP_DIR"
 
+# Ensure Poetry is available even when run from cron or a minimal shell
+export PATH="$HOME/.local/bin:$PATH"
+
 echo "🔄 Обновление Ollama Telegram Bot..."
 
 # Pull latest code
