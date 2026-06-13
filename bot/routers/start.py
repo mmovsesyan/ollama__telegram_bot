@@ -1,6 +1,6 @@
 from aiogram import Router
 from aiogram.filters.command import CommandStart
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import Message
 
 from bot.keyboards.reply import command_keyboard
 
@@ -11,24 +11,13 @@ router = Router()
 async def start_command(message: Message) -> None:
     await message.answer(
         "Привет! Я AI-бот на базе Ollama.\n\n"
-        "Кнопки внизу — быстрый доступ к командам:\n\n"
-        "🤖 AI:\n"
-        "  🤖 Модели — список моделей\n"
-        "  ❓ Помощь — справка\n"
-        "  🗑 Очистить — сбросить чат\n\n"
-        "🌐 Поиск:\n"
-        "  🔍 Поиск — в интернете\n"
-        "  🌤 Погода — по городу\n"
-        "  📰 Новости — актуальные\n\n"
-        "📝 Память:\n"
-        "  🧠 Память — факты и заметки\n"
-        "  📝 Заметка — сохранить мысль\n\n"
-        "⏰ Напоминания:\n"
-        "  ⏰ Напоминание — добавить\n\n"
-        "🔍 Мониторинг:\n"
-        "  ➕ Монитор — добавить сайт\n"
-        "  🔍 Мониторы — список\n\n"
-        "📊 Другое:\n"
-        "  📊 Отчёт — сводка\n\n"
-        "Или напишите что угодно для разговора с AI.",
+        "Просто **напиши** или **скажи голосом**, что нужно:\n"
+        "• «погода в Москве»\n"
+        "• «напомни через 5 минут позвонить»\n"
+        "• «каждое утро в 9 покажи новости»\n"
+        "• «запомни, я люблю краткие ответы»\n"
+        "• «поищи последние новости Tesla»\n\n"
+        "Кнопки внизу — быстрый доступ к частым действиям.\n"
+        "Нажми /help для примеров и команд.",
+        reply_markup=command_keyboard,
     )

@@ -12,26 +12,22 @@ import aiohttp
 from datetime import datetime, timezone
 
 COMMANDS = [
-    BotCommand(command="start", description="Приветствие и настройка"),
+    BotCommand(command="start", description="Приветствие и меню"),
+    BotCommand(command="help", description="Примеры и команды"),
+    BotCommand(command="remind", description="Добавить напоминание"),
+    BotCommand(command="reminders", description="Список напоминаний"),
+    BotCommand(command="memory", description="Показать память"),
+    BotCommand(command="memory_add", description="Добавить факт в память"),
+    BotCommand(command="note", description="Сохранить заметку"),
+    BotCommand(command="search", description="Поиск в интернете"),
+    BotCommand(command="weather", description="Погода в городе"),
+    BotCommand(command="news", description="Актуальные новости"),
+    BotCommand(command="monitor_add", description="Добавить монитор сайта"),
+    BotCommand(command="monitors", description="Список мониторов"),
     BotCommand(command="models", description="Список моделей"),
     BotCommand(command="model", description="Сменить модель"),
     BotCommand(command="clear", description="Очистить историю"),
-    BotCommand(command="note", description="Сохранить заметку"),
-    BotCommand(command="memory", description="Показать память"),
-    BotCommand(command="memory_add", description="Добавить факт в память"),
-    BotCommand(command="memory_remove", description="Удалить факт"),
-    BotCommand(command="remind", description="Добавить напоминание"),
-    BotCommand(command="reminders", description="Список напоминаний"),
-    BotCommand(command="remind_cancel", description="Отменить напоминание"),
-    BotCommand(command="monitor_add", description="Добавить монитор"),
-    BotCommand(command="monitors", description="Список мониторов"),
-    BotCommand(command="monitor_remove", description="Удалить монитор"),
-    BotCommand(command="search", description="Поиск в интернете"),
-    BotCommand(command="fetch", description="Загрузить страницу"),
-    BotCommand(command="weather", description="Погода в городе"),
-    BotCommand(command="news", description="Актуальные новости"),
     BotCommand(command="report", description="Ежедневный отчет"),
-    BotCommand(command="help", description="Полная справка"),
 ]
 
 

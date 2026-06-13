@@ -10,8 +10,8 @@ import os
 import tempfile
 
 from bot.bot import bot as aiogram_bot
-from bot.keyboards.inline import answer_keyboard
-from bot.keyboards.reply import command_keyboard, cancel_keyboard
+from bot.keyboards.inline import answer_keyboard, reminder_quick_keyboard, memory_category_keyboard, recurring_suggest_keyboard
+from bot.keyboards.reply import command_keyboard, cancel_keyboard, fsm_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
@@ -113,17 +113,12 @@ def _estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token on average."""
     return max(1, len(text) // 4)
 
+# Map new simplified reply buttons to commands/intents.
 BUTTON_MAP = {
-    "🤖 Модели": "/models",
+    "💬 Чат": None,          # just talk to AI
     "🔍 Поиск": "/search",
-    "🌤 Погода": "/weather",
-    "📰 Новости": "/news",
-    "🧠 Память": "/memory",
-    "📝 Заметка": "/note",
     "⏰ Напоминание": "/remind",
-    "🔍 Мониторы": "/monitors",
-    "➕ Монитор": "/monitor_add",
-    "📊 Отчёт": "/report",
+    "🧠 Память": "/memory",
     "❓ Помощь": "/help",
     "🗑 Очистить": "/clear",
 }
@@ -140,32 +135,9 @@ async def generate(message: Message, user_id: int, text: str):
         return
     _generating.add(user_id)
 
-    # Map Russian button labels back to commands
-    if text in BUTTON_MAP:
-        text = BUTTON_MAP[text]
+    # Free-form text reaches the LLM normally.
 
-    # Safety net: known commands should never reach the LLM
-    KNOWN_COMMANDS = {
-        "/models", "/help", "/model", "/clear",
-        "/search", "/weather", "/news", "/note",
-        "/remind", "/reminders", "/remind_cancel", "/remind_remove",
-        "/monitors", "/monitor_add", "/monitor_remove",
-        "/report", "/memory", "/memory_add", "/memory_remove",
-        "/fetch",
-    }
-    parts = text.split()
-    if parts and parts[0] in KNOWN_COMMANDS:
-        cmd = parts[0]
-        print(f"[ROUTING WARNING] Command {cmd} reached generate(). Check router order.")
-        await message.answer(
-            f"⚠️ Команда {cmd} не обработана. Убедитесь, что cron.router подключён ДО completion.router."
-        )
-        return
-
-    is_command = text.startswith("/")
     created = _create_chat(user_id)
-    if created and not is_command:
-        await message.answer(f"Чат создан. Модель: {chats[user_id].selected_model}")
 
     chat = chats[user_id]
 
@@ -492,37 +464,25 @@ async def cmd_help(message: Message):
         print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
         return
     await message.answer(
-        "🤖 Команды бота:\n\n"
-        "📋 AI:\n"
-        "/models — список моделей\n"
-        "/model <name> — сменить модель\n"
-        "/clear — очистить историю\n\n"
-        "🌐 Поиск в интернете:\n"
-        "/search <запрос> — поиск через Ollama Web\n"
-        "/fetch <url> — загрузить страницу\n"
-        "/weather <город> — погода\n"
-        "/news — актуальные новости\n\n"
-        "📝 Заметки и память:\n"
-        "/note <текст> — сохранить заметку\n"
-        "/memory_add [<category>] <текст> — сохранить факт\n"
-        "   категории: fact, preference, task, decision\n"
-        "/memory — показать все факты\n"
-        "/memory_remove <id> — удалить факт\n\n"
+        "🤖 Просто напиши или скажи голосом, что нужно:\n\n"
+        "🌤 Погода:\n"
+        "• «погода в Москве»\n\n"
         "⏰ Напоминания:\n"
-        "/remind <время> <текст> — добавить\n"
-        "/reminders — список\n"
-        "/remind_cancel <id> — отменить\n"
-        "/remind_remove <id> — удалить\n\n"
-        "🔍 Мониторинг сайтов:\n"
-        "/monitor_add <name> <url> [интервал] — добавить\n"
-        "   Интервал: 5m (5 мин), 1h (1 час), или секунды\n"
-        "   Пример: /monitor_add Timeweb 37.220.85.240 5m\n"
-        "/monitors — список и статус\n"
-        "/monitor_remove <id> — удалить\n\n"
-        "📊 Другое:\n"
-        "/report — ежедневный отчёт\n"
-        "/help — эта справка\n\n"
-        "Напишите любое сообщение для разговора с AI.",
+        "• «напомни через 5 минут позвонить»\n"
+        "• «завтра в 9:00 проверить отчёт»\n"
+        "• «каждое утро в 9 покажи новости»\n\n"
+        "📝 Заметки и память:\n"
+        "• «запомни, я люблю краткие ответы»\n"
+        "• «заметка: купить акции TSLA»\n\n"
+        "🔍 Поиск и новости:\n"
+        "• «поищи последние новости Tesla»\n"
+        "• «новости»\n\n"
+        "💬 AI-чат:\n"
+        "• просто напиши вопрос — бот ответит через Ollama\n\n"
+        "📋 Команды:\n"
+        "/start — меню, /models — модели, /model <name> — сменить модель\n"
+        "/clear — очистить историю, /memory — показать память\n"
+        "/reminders — напоминания, /monitors — мониторы, /report — отчёт",
     )
 
 
@@ -599,6 +559,23 @@ async def cmd_clear(message: Message):
         db.close_session(chats[user_id].session_id, "User cleared chat")
     _delete_chat(user_id)
     await message.answer("История очищена.")
+
+
+@router.message(F.text == "💬 Чат")
+async def btn_chat(message: Message):
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
+        return
+    await message.answer(
+        "💬 Просто напиши или скажи голосом, что нужно.\n\n"
+        "Например:\n"
+        "• «погода в Москве»\n"
+        "• «напомни через 5 минут позвонить»\n"
+        "• «поищи последние новости Tesla»",
+        reply_markup=command_keyboard,
+    )
 
 
 @router.callback_query(F.data == "like")
@@ -988,7 +965,10 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
                 return
             if intent == "model":
                 if arg:
-                    await generate(message, user_id, f"/model {arg}")
+                    from copy import copy
+                    model_msg = copy(message)
+                    model_msg.text = f"/model {arg}"
+                    await cmd_model(model_msg, state)
                 else:
                     await state.set_state(BotStates.waiting_model)
                     await message.answer("Укажите модель. Пример: llama3", reply_markup=cancel_keyboard)
@@ -1003,6 +983,12 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
     except Exception as e:
         print(f"[INTENT ERROR] {e}")
     await generate(message, user_id, text)
+
+@router.message(F.text)
+async def handle_text(message: Message, state: FSMContext):
+    """Main text handler: buttons, natural language, and free-form chat all converge here."""
+    await answer(message, state)
+
 
 # Global error handler: prevents bot crash on any unhandled exception
 @router.errors()

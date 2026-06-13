@@ -9,6 +9,12 @@ import aiohttp
 
 from bot.states import BotStates
 from bot.keyboards.reply import command_keyboard, cancel_keyboard, fsm_keyboard
+from bot.keyboards.inline import (
+    confirm_keyboard,
+    memory_category_keyboard,
+    recurring_suggest_keyboard,
+    reminder_quick_keyboard,
+)
 from bot.settings import ALLOWED_CHAT_IDS
 
 router = Router()
@@ -17,9 +23,8 @@ db = None  # injected in __init__
 
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
-    "🤖 Модели", "🔍 Поиск", "🌤 Погода", "📰 Новости",
-    "🧠 Память", "📝 Заметка", "⏰ Напоминание", "🔍 Мониторы",
-    "➕ Монитор", "📊 Отчёт", "❓ Помощь", "🗑 Очистить",
+    "💬 Чат", "🔍 Поиск", "⏰ Напоминание", "🧠 Память",
+    "❓ Помощь", "🗑 Очистить",
 }
 
 
@@ -435,11 +440,9 @@ async def cmd_remind(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "⏰ Введите время и текст напоминания:\n"
-            "Примеры:\n"
-            "  через 5 минут позвонить брокеру\n"
-            "  завтра в 9:00 проверить отчет\n"
-            "  2026-06-10 14:00 встреча",
+            "⏰ Чего напомнить?\n"
+            "Например: позвонить брокеру",
+            reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_remind)
         return
@@ -457,31 +460,12 @@ async def btn_remind(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.")
         return
 
-    reminders = db.get_user_reminders(message.from_user.id)
-    if not reminders:
-        await message.answer(
-            "Нет активных напоминаний.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")]]
-            ),
-        )
-        await message.answer("Выберите действие:")
-        return
-
-    text = "⏰ Активные напоминания:\n\n"
-    buttons = []
-    for idx, r in enumerate(reminders, 1):
-        time_str = r.get('trigger_at', 'ASAP')
-        content = r.get('content', '')
-        rec = r.get('recurring')
-        mode = "🤖" if r.get('action') == 'execute' else "⏰"
-        rec_label = f" ({rec})" if rec else ""
-        text += f"#{idx} {mode} | {time_str}{rec_label}\n{content}\n\n"
-        buttons.append([InlineKeyboardButton(text=f"❌ Удалить #{idx}", callback_data=f"del_reminder:{r['id']}")])
-
-    buttons.append([InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")])
-    await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await message.answer("Выберите действие:")
+    await message.answer(
+        "⏰ Чего напомнить?\n"
+        "Например: позвонить брокеру",
+        reply_markup=cancel_keyboard,
+    )
+    await state.set_state(BotStates.waiting_remind)
 
 
 async def _process_remind(user_id: int, text: str, action: str = "notify"):
@@ -535,7 +519,107 @@ async def process_remind(message: Message, state: FSMContext):
         return
     if await _fsm_guard(message, state):
         return
-    await _process_remind(message.from_user.id, message.text)
+    content = message.text.strip()
+    if not content:
+        await message.answer("Введите текст напоминания.", reply_markup=cancel_keyboard)
+        return
+    await state.update_data(remind_content=content)
+    await state.set_state(BotStates.waiting_remind_time)
+    await message.answer(
+        f"⏰ Напомнить: {content}\n\nКогда?",
+        reply_markup=reminder_quick_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("remind_quick:"))
+async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    mode = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    content = data.get("remind_content", "")
+    if not content:
+        await callback.answer("Ошибка: нет текста", show_alert=True)
+        await state.clear()
+        return
+
+    now = datetime.now(timezone.utc)
+    trigger_at = now
+    recurring = None
+
+    if mode == "5m":
+        trigger_at = now + timedelta(minutes=5)
+    elif mode == "tomorrow9":
+        trigger_at = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    elif mode == "daily9":
+        trigger_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        if trigger_at <= now:
+            trigger_at += timedelta(days=1)
+        recurring = "daily"
+    elif mode == "auto":
+        await state.set_state(BotStates.waiting_remind_time)
+        await callback.message.answer(
+            "⏰ Когда напомнить?\n"
+            "Например: через 5 минут, завтра в 9:00, каждый день в 7:00",
+            reply_markup=cancel_keyboard,
+        )
+        await callback.answer("Введите время")
+        return
+    else:
+        trigger_at = now + timedelta(minutes=5)
+
+    rid = db.add_reminder(
+        user_id=callback.from_user.id,
+        content=content,
+        trigger_at=trigger_at.isoformat(),
+        recurring=recurring,
+        action="notify",
+    )
+    rec_label = f" ({recurring})" if recurring else ""
+    await callback.message.answer(
+        f"✅ Напоминание #{rid} установлено на {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+        f"Текст: {content}",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await state.clear()
+    await callback.answer("Напоминание создано")
+
+
+@router.message(BotStates.waiting_remind_time)
+async def process_remind_time(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    data = await state.get_data()
+    content = data.get("remind_content", "")
+    if not content:
+        await message.answer("Ошибка: не найден текст напоминания.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    time_text = message.text.strip()
+    trigger_at, recurring = parse_reminder(time_text)
+    rid = db.add_reminder(
+        user_id=message.from_user.id,
+        content=content,
+        trigger_at=trigger_at.isoformat(),
+        recurring=recurring,
+        action="notify",
+    )
+    rec_label = f" ({recurring})" if recurring else ""
+    await message.answer(
+        f"✅ Напоминание #{rid} установлено на {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+        f"Текст: {content}",
+        reply_markup=ReplyKeyboardRemove(),
+    )
     await state.clear()
 
 @router.message(lambda m: m.text and m.text == "/reminders")
@@ -692,7 +776,6 @@ async def process_note(message: Message, state: FSMContext):
     await state.clear()
 
 @router.message(lambda m: m.text and m.text.startswith("/monitor_add"))
-@router.message(F.text == "➕ Монитор")
 async def cmd_monitor_add(message: Message, state: FSMContext):
     if message.from_user is None:
         return
@@ -703,17 +786,118 @@ async def cmd_monitor_add(message: Message, state: FSMContext):
         return
 
     parts = message.text.split(maxsplit=3)
-    if len(parts) < 3:
-        await message.answer(
-            "🔍 Введите данные монитора:\n"
-            "<имя> <url> [интервал]\n\n"
-            "Интервал: 5m (минут), 1h (час), или секунды\n"
-            "Пример: Timeweb 37.220.85.240 5m",
+    if len(parts) >= 3:
+        await _process_monitor_add(
+            message,
+            parts[1],
+            _normalize_url(parts[2]),
+            _parse_interval(parts[3]) if len(parts) >= 4 else 300,
         )
-        await state.set_state(BotStates.waiting_monitor_add)
         return
 
-    await _process_monitor_add(message, parts[1], _normalize_url(parts[2]), _parse_interval(parts[3]) if len(parts) >= 4 else 300)
+    await message.answer(
+        "🔍 Название монитора?\n"
+        "Например: Google",
+        reply_markup=cancel_keyboard,
+    )
+    await state.set_state(BotStates.waiting_monitor_name)
+
+
+@router.message(BotStates.waiting_monitor_name)
+async def process_monitor_name(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    name = message.text.strip()
+    if not name:
+        await message.answer("Введите название монитора.", reply_markup=cancel_keyboard)
+        return
+    await state.update_data(monitor_name=name)
+    await state.set_state(BotStates.waiting_monitor_url)
+    await message.answer(
+        f"🔍 Монитор: {name}\n\nВведите URL:\n"
+        "Например: google.com или https://google.com",
+        reply_markup=cancel_keyboard,
+    )
+
+
+@router.message(BotStates.waiting_monitor_url)
+async def process_monitor_url(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    url = _normalize_url(message.text.strip())
+    if not url:
+        await message.answer("Введите URL.", reply_markup=cancel_keyboard)
+        return
+    await state.update_data(monitor_url=url)
+    await state.set_state(BotStates.waiting_monitor_interval)
+    await message.answer(
+        "🔍 Интервал проверки?\n"
+        "Например: 5m, 1h, или 300 (секунд)",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="5 минут", callback_data="mon_int:5m")],
+                [InlineKeyboardButton(text="15 минут", callback_data="mon_int:15m")],
+                [InlineKeyboardButton(text="1 час", callback_data="mon_int:1h")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("mon_int:"))
+async def cb_monitor_interval(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    interval_text = callback.data.split(":", 1)[1]
+    await state.update_data(monitor_interval=_parse_interval(interval_text))
+    await _finish_monitor_add(callback.message, state, callback.from_user.id)
+    await callback.answer("Монитор добавлен")
+
+
+@router.message(BotStates.waiting_monitor_interval)
+async def process_monitor_interval(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    interval = _parse_interval(message.text.strip())
+    await state.update_data(monitor_interval=interval)
+    await _finish_monitor_add(message, state, message.from_user.id)
+
+
+async def _finish_monitor_add(message: Message, state: FSMContext, user_id: int):
+    data = await state.get_data()
+    name = data.get("monitor_name", "")
+    url = data.get("monitor_url", "")
+    interval = data.get("monitor_interval", 300)
+    if not name or not url:
+        await message.answer("Ошибка: не хватает данных для монитора.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    await _process_monitor_add(message, name, url, interval)
+    await state.clear()
 
 
 async def _process_monitor_add(message: Message, name: str, url: str, interval: int, expected_status: int = 200):
@@ -746,28 +930,6 @@ async def _process_monitor_add(message: Message, name: str, url: str, interval: 
     )
 
 
-@router.message(BotStates.waiting_monitor_add)
-async def process_monitor_add(message: Message, state: FSMContext):
-    if message.from_user is None:
-        await state.clear()
-        return
-    if message.text is None:
-        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
-        await state.clear()
-        return
-    if await _fsm_guard(message, state):
-        return
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 2:
-        await message.answer("Нужно указать имя и URL. Пример: Timeweb 37.220.85.240 5m", reply_markup=cancel_keyboard)
-        await state.clear()
-        return
-    name = parts[0]
-    url = _normalize_url(parts[1])
-    interval = _parse_interval(parts[2]) if len(parts) >= 3 else 300
-    await _process_monitor_add(message, name, url, interval)
-    await message.answer("✅ Готово.", reply_markup=cancel_keyboard)
-    await state.clear()
 
 @router.message(lambda m: m.text and m.text == "/monitors")
 @router.message(F.text == "🔍 Мониторы")
@@ -912,19 +1074,11 @@ async def cmd_memory_add(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
         await message.answer(
-            "🧠 Добавление факта в память бота\n\n"
-            "Бот запомнит это и будет использовать в разговоре.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="📌 Факт", callback_data="mem_cat:fact"),
-                     InlineKeyboardButton(text="❤️ Предпочтение", callback_data="mem_cat:preference")],
-                    [InlineKeyboardButton(text="📋 Задача", callback_data="mem_cat:task"),
-                     InlineKeyboardButton(text="⚖️ Решение", callback_data="mem_cat:decision")],
-                        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
-                ]
-            ),
+            "🧠 Что запомнить?\n"
+            "Например: я люблю краткие ответы",
+            reply_markup=cancel_keyboard,
         )
-        await message.answer("Выберите тип факта:")
+        await state.set_state(BotStates.waiting_memory_add)
         return
 
     if len(parts) == 2:
@@ -954,13 +1108,13 @@ async def process_memory_add(message: Message, state: FSMContext):
     content = (message.text or "").strip()
     if not content:
         await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
-        await state.clear()
         return
-    data = await state.get_data()
-    category = data.get("memory_category", "fact")
-    mid = db.add_memory(message.from_user.id, category, content)
-    await message.answer(f"✅ Факт #{mid} сохранён: [{category}] {content}", reply_markup=cancel_keyboard)
-    await state.clear()
+    await state.update_data(memory_content=content)
+    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "task": "📋 Задача", "decision": "⚖️ Решение"}
+    await message.answer(
+        f"🧠 Запомнить: {content}\n\nВыбери категорию:",
+        reply_markup=memory_category_keyboard(),
+    )
 
 
 @router.message(BotStates.waiting_task_text)
@@ -1722,6 +1876,18 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
     cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "task": "📋 Задача", "decision": "⚖️ Решение"}
     await callback.answer(f"Выбрано: {cat_names.get(category, category)}")
 
+    data = await state.get_data()
+    content = data.get("memory_content", "")
+
+    if content:
+        mid = db.add_memory(callback.from_user.id, category, content)
+        await callback.message.answer(
+            f"✅ Факт #{mid} сохранён: [{category}] {content}",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await state.clear()
+        return
+
     if category == "task":
         await state.set_state(BotStates.waiting_task_text)
         await callback.message.answer(
@@ -1747,19 +1913,11 @@ async def cb_add_memory(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer("Добавление факта")
     await callback.message.answer(
-        "🧠 Добавление факта в память бота\n\n"
-        "Бот запомнит это и будет использовать в разговоре.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📌 Факт", callback_data="mem_cat:fact"),
-                 InlineKeyboardButton(text="❤️ Предпочтение", callback_data="mem_cat:preference")],
-                [InlineKeyboardButton(text="📋 Задача", callback_data="mem_cat:task"),
-                 InlineKeyboardButton(text="⚖️ Решение", callback_data="mem_cat:decision")],
-                    [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
-            ]
-        ),
+        "🧠 Что запомнить?\n"
+        "Например: я люблю краткие ответы",
+        reply_markup=cancel_keyboard,
     )
-    await callback.message.answer("Выберите тип факта:")
+    await state.set_state(BotStates.waiting_memory_add)
 
 
 @router.callback_query(F.data == "add_reminder")
@@ -1771,11 +1929,9 @@ async def cb_add_reminder(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer("Добавление напоминания")
     await callback.message.answer(
-        "⏰ Введите время и текст напоминания:\n"
-        "Примеры:\n"
-        "  через 5 минут позвонить брокеру\n"
-        "  завтра в 9:00 проверить отчет\n"
-        "  2026-06-10 14:00 встреча",
+        "⏰ Чего напомнить?\n"
+        "Например: позвонить брокеру",
+        reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_remind)
 
@@ -1789,25 +1945,18 @@ async def cb_add_monitor(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer("Добавление монитора")
     await callback.message.answer(
-        "🔍 Введите данные монитора:\n"
-        "<имя> <url> [интервал]\n\n"
-        "Интервал: 5m (минут), 1h (час), или секунды\n"
-        "Пример: Timeweb 37.220.85.240 5m",
+        "🔍 Название монитора?\n"
+        "Например: Google",
+        reply_markup=cancel_keyboard,
     )
-    await state.set_state(BotStates.waiting_monitor_add)
+    await state.set_state(BotStates.waiting_monitor_name)
 
 
 # Register button handlers for instant FSM routing
 _BUTTON_HANDLERS.update({
     "🔍 Поиск": btn_search,
-    "🌤 Погода": btn_weather,
-    "📰 Новости": cmd_news,
-    "🧠 Память": cmd_memory,
-    "📝 Заметка": btn_note,
     "⏰ Напоминание": btn_remind,
-    "🔍 Мониторы": cmd_monitors,
-    "➕ Монитор": cmd_monitor_add,
-    "📊 Отчёт": cmd_report,
+    "🧠 Память": cmd_memory,
 })
 @router.callback_query(F.data == "cancel")
 async def cb_cancel(callback: CallbackQuery, state: FSMContext):

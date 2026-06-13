@@ -17,6 +17,11 @@ def get_bot() -> Bot:
     return _bot
 
 
-# Backward compatibility: module-level alias.
-# Accessing `bot` before TELEGRAM_TOKEN is set will raise RuntimeError.
-bot = get_bot()
+# Lazy module-level alias: importing the module does not require a token.
+# Actual Bot instance is created on first attribute access.
+class _LazyBot:
+    def __getattr__(self, name: str):
+        return getattr(get_bot(), name)
+
+
+bot: Bot = _LazyBot()  # type: ignore[assignment]
