@@ -8,13 +8,8 @@ LOG_FILE="$APP_DIR/bot.log"
 
 cd "$APP_DIR"
 
-ensure_poetry() {
-    if ! command -v poetry &> /dev/null; then
-        echo "📚 Poetry не найден. Устанавливаю..."
-        curl -sSL https://install.python-poetry.org | python3 -
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
-}
+# shellcheck source=scripts/install_utils.sh
+source "$APP_DIR/scripts/install_utils.sh"
 
 env_is_valid() {
     if [[ ! -f "$ENV_FILE" ]]; then
@@ -74,10 +69,8 @@ stop_existing() {
 start_bot() {
     ensure_poetry
 
-    if ! command -v ffmpeg &> /dev/null; then
-        echo "⚠️  ffmpeg не найден. Голосовые сообщения не будут распознаваться."
-        echo "   macOS: brew install ffmpeg"
-        echo "   Linux: sudo apt install ffmpeg"
+    if ! ensure_ffmpeg; then
+        _warn "Голосовые сообщения будут недоступны без ffmpeg."
     fi
 
     echo "⬇️  Устанавливаю / обновляю зависимости..."
@@ -127,8 +120,15 @@ case "${1:-start}" in
         ensure_poetry
         ensure_env
         ;;
+    deps)
+        ensure_python
+        ensure_ffmpeg
+        ensure_poetry
+        poetry_install_deps
+        warmup_whisper
+        ;;
     *)
-        echo "Использование: $0 {start|stop|restart|status|logs|env}"
+        echo "Использование: $0 {start|stop|restart|status|logs|env|deps}"
         exit 1
         ;;
 esac

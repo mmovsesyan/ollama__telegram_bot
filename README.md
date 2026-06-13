@@ -1,6 +1,8 @@
 # Ollama Telegram Bot
 
-Telegram-бот на базе Ollama (Cloud или локальной) с долгосрочной памятью, напоминаниями, веб-поиском и мониторингом сайтов.
+Telegram-бот на базе Ollama (Cloud или локальной) с долгосрочной памятью, напоминаниями, веб-поиском, мониторингом сайтов и распознаванием голоса.
+
+Работает на **macOS**, **Linux** (Ubuntu/Debian, Fedora/RHEL, Arch) и **Windows через WSL**. Скрипты установки автоматически ставят Poetry, Python, ffmpeg и все Python-зависимости.
 
 ## Возможности
 
@@ -24,13 +26,13 @@ Telegram-бот на базе Ollama (Cloud или локальной) с дол
 curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install.sh | bash
 ```
 
-Скрипт клонирует репозиторий, установит зависимости и проведёт по шагам настройки `.env`.
+Скрипт автоматически:
+- проверит/установит Python 3.10+, git, ffmpeg, Poetry;
+- установит Python-зависимости (`poetry install --without dev`);
+- предзагрузит Whisper-модель;
+- проведёт по шагам настройки `.env`.
 
-> Для голосовых сообщений установи ffmpeg:
-> ```bash
-> brew install ffmpeg      # macOS
-> sudo apt install ffmpeg  # Ubuntu/Debian
-> ```
+На Linux для установки системных пакетов (ffmpeg, git, python3) потребуется **sudo** — скрипт спросит разрешение. На macOS используется Homebrew (обычно без sudo).
 
 ### Автоматически
 
@@ -48,10 +50,9 @@ curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main
 ```bash
 git clone https://github.com/mmovsesyan/ollama__telegram_bot.git
 cd ollama__telegram_bot
-poetry install --no-dev
-cp .env.example .env
-# отредактируй .env
-poetry run python main.py
+./scripts/install_deps.sh  # или вручную: poetry install --without dev
+./run.sh env               # интерактивное создание .env
+./run.sh start
 ```
 
 ## Управление ботом
@@ -65,6 +66,7 @@ poetry run python main.py
 ./run.sh status     # статус
 ./run.sh logs       # смотреть лог в реальном времени
 ./run.sh env        # пересоздать .env
+./run.sh deps       # установить/обновить системные и Python-зависимости
 ```
 
 ## Автоматическое обновление
@@ -121,13 +123,27 @@ WHISPER_COMPUTE_TYPE=default # int8, float16, default
 | `/report` | Ежедневный отчёт |
 | `/help` | Справка |
 
+## Поддерживаемые платформы
+
+- **macOS** 11+ (Intel и Apple Silicon) — через Homebrew
+- **Linux**:
+  - Ubuntu / Debian / Pop!_OS / Linux Mint / Zorin OS / elementary OS
+  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux / Nobara
+  - Arch Linux / Manjaro / EndeavourOS / Garuda
+- **Windows** — запускайте скрипты внутри **WSL2** или Git Bash; нативный PowerShell не поддерживается.
+
 ## Требования
 
+Всё необходимое скрипты установки ставят автоматически:
 - Python 3.10+
 - [Poetry](https://python-poetry.org/)
-- [ffmpeg](https://ffmpeg.org/) — необходим для распознавания голосовых сообщений Telegram (OGG Opus)
+- [ffmpeg](https://ffmpeg.org/) — для распознавания голосовых сообщений Telegram (OGG Opus)
+- git
+
+Что нужно от пользователя:
 - Аккаунт/ключ Ollama Cloud (или локальная Ollama)
 - Telegram Bot Token от [@BotFather](https://t.me/BotFather)
+- на Linux — права sudo для установки системных пакетов
 
 ## Архитектура
 

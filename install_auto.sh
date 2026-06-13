@@ -10,24 +10,30 @@ OLLAMA_BOT_MODEL="${OLLAMA_BOT_MODEL:-kimi-k2.7-code:cloud}"
 OLLAMA_API_HOST="${OLLAMA_API_HOST:-https://api.ollama.com}"
 ALLOWED_CHAT_IDS="${ALLOWED_CHAT_IDS:-}"
 
+ensure_git_minimal() {
+    if ! command -v git &> /dev/null; then
+        echo "❌ git не найден. Установи git вручную или запусти install_auto.sh на системе с git."
+        exit 1
+    fi
+}
+
+ensure_git_minimal
+
 echo "📦 Cloning $REPO_URL into $INSTALL_DIR..."
 git clone "$REPO_URL" "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-echo "📚 Installing Poetry (if missing)..."
-if ! command -v poetry &> /dev/null; then
-    curl -sSL https://install.python-poetry.org | python3 -
-    export PATH="$HOME/.local/bin:$PATH"
-fi
+# shellcheck source=scripts/install_utils.sh
+source "scripts/install_utils.sh"
 
-if ! command -v ffmpeg &> /dev/null; then
-    echo "⚠️  ffmpeg не найден. Он нужен для распознавания голосовых сообщений."
-    echo "   macOS: brew install ffmpeg"
-    echo "   Linux: sudo apt install ffmpeg"
-fi
+_print "🚀 Универсальная автоматическая установка Ollama Telegram Bot"
+_print "Платформа: $(uname -s) ($(detect_os))"
 
-echo "⬇️  Installing dependencies..."
-poetry install --without dev
+ensure_python
+ensure_ffmpeg
+ensure_poetry
+poetry_install_deps
+warmup_whisper
 
 if [[ -z "$TELEGRAM_TOKEN" || -z "$OLLAMA_API_KEY" ]]; then
     echo "⚠️  Required env variables not set. Switching to interactive setup..."
@@ -41,6 +47,9 @@ OLLAMA_API_HOST=$OLLAMA_API_HOST
 OLLAMA_BOT_MODEL=$OLLAMA_BOT_MODEL
 OLLAMA_API_KEY=$OLLAMA_API_KEY
 OLLAMA_WEB_API_KEY=$OLLAMA_API_KEY
+WHISPER_MODEL=tiny
+WHISPER_DEVICE=auto
+WHISPER_COMPUTE_TYPE=default
 EOF
 fi
 
