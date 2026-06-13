@@ -1,40 +1,57 @@
-# Ollama Telegram Bot
+<div align="center">
 
-Telegram-бот на базе Ollama (Cloud или локальной) с долгосрочной памятью, напоминаниями, веб-поиском, мониторингом сайтов и распознаванием голоса.
+# 🤖 Ollama Telegram Bot
 
-Работает на **macOS**, **Linux** (Ubuntu/Debian, Fedora/RHEL, Arch) и **Windows через WSL**. Скрипты установки автоматически ставят Poetry, Python, ffmpeg и все Python-зависимости.
+**Кроссплатформенный Telegram AI-бот на базе Ollama**
 
-## Возможности
+С долгосрочной памятью, напоминаниями, веб-поиском, мониторингом сайтов и распознаванием голоса.
 
-- 💬 **AI-чат** с контекстом, сменой моделей и кнопками лайк/дизлайк
-- 🎤 **Голосовые сообщения**: распознавание речи через Whisper (faster-whisper) и ответ AI на транскрибированный текст
-- 🧠 **Память**: автоматическое извлечение фактов, предпочтений, задач и решений
-- 📝 **Заметки** в пользовательском профиле
-- ⏰ **Напоминания** разовые и периодические (ежедневно, по будням, в выходные, по дням недели)
-- 🤖 **AI-задачи**: напоминания, которые выполняются через LLM или реальные API (погода и др.)
-- 🔍 **Веб-поиск** и загрузка страниц через Ollama Web API
-- 🌤 **Погода** (wttr.in + Open-Meteo fallback)
-- 📰 **Новости** через веб-поиск
-- 🔎 **Мониторинг сайтов** с алертами в Telegram
-- 🗑 **Очистка истории** и управление сессиями
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Poetry](https://img.shields.io/badge/poetry-2.x-blueviolet.svg)](https://python-poetry.org/)
+[![Ollama](https://img.shields.io/badge/ollama-cloud%20%7C%20local-white.svg)](https://ollama.com/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Быстрая установка
+</div>
 
-### Интерактивно (рекомендуется)
+---
+
+## ✨ Возможности
+
+| Функция | Описание |
+|---------|----------|
+| 💬 **AI-чат** | Контекстный диалог со сменой моделей, кнопками лайк/дизлайк |
+| 🎤 **Голосовые сообщения** | Распознавание речи через Whisper и AI-ответ на транскрибированный текст |
+| 🧠 **Память (OpenClaude-style)** | Автоизвлечение фактов, предпочтений, задач и решений из диалога |
+| 📝 **Заметки** | Сохранение личных заметок в профиле пользователя |
+| ⏰ **Напоминания** | Разовые и периодические: ежедневно, по будням, выходным, дням недели |
+| 🤖 **AI-задачи** | Напоминания, которые выполняет LLM или реальные API (погода и др.) |
+| 🔍 **Веб-поиск** | Поиск в интернете и загрузка страниц через Ollama Web API |
+| 🌤 **Погода** | wttr.in + Open-Meteo fallback |
+| 📰 **Новости** | Актуальные новости через веб-поиск |
+| 🔎 **Мониторинг сайтов** | Проверка URL с алертами в Telegram |
+| 📄 **Файлы** | Извлечение текста из PDF, DOCX, CSV, TXT, JSON и других |
+| 🗑 **Управление сессиями** | Очистка истории, авто-сжатие контекста |
+
+---
+
+## 🚀 Быстрая установка
+
+### 1. Один командой (рекомендуется)
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install.sh | bash
 ```
 
 Скрипт автоматически:
-- проверит/установит Python 3.10+, git, ffmpeg, Poetry;
-- установит Python-зависимости (`poetry install --without dev`);
+- проверит/установит **Python 3.10+**, **git**, **ffmpeg**, **Poetry**;
+- установит Python-зависимости;
 - предзагрузит Whisper-модель;
-- проведёт по шагам настройки `.env`.
+- интерактивно создаст `.env` с нужными ключами.
 
-На Linux для установки системных пакетов (ffmpeg, git, python3) потребуется **sudo** — скрипт спросит разрешение. На macOS используется Homebrew (обычно без sudo).
+На Linux для системных пакетов потребуется **sudo** — скрипт спросит разрешение.  
+На macOS используется Homebrew (обычно без sudo).
 
-### Автоматически
+### 2. Полностью автоматически (для серверов / CI)
 
 ```bash
 export TELEGRAM_TOKEN="123456:ABC..."
@@ -45,72 +62,72 @@ export OLLAMA_API_HOST="https://api.ollama.com"
 curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install_auto.sh | bash
 ```
 
-### Вручную
+Для бесшумного режима без вопросов:
+
+```bash
+AUTO_INSTALL=1 curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install_auto.sh | bash
+```
+
+### 3. Вручную (если уже есть git)
 
 ```bash
 git clone https://github.com/mmovsesyan/ollama__telegram_bot.git
 cd ollama__telegram_bot
-./scripts/install_deps.sh  # или вручную: poetry install --without dev
-./run.sh env               # интерактивное создание .env
+./scripts/install_deps.sh
+./run.sh env
 ./run.sh start
 ```
 
-## Управление ботом
+---
 
-После установки используйте `./run.sh`:
+## 🖥 Поддерживаемые платформы
+
+- **macOS** 11+ (Intel и Apple Silicon)
+- **Linux**:
+  - Ubuntu / Debian / Pop!_OS / Linux Mint / Zorin OS / elementary OS
+  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux / Nobara
+  - Arch Linux / Manjaro / EndeavourOS / Garuda
+- **Windows** — через **WSL2** или Git Bash
+
+---
+
+## 🎛 Управление ботом
 
 ```bash
-./run.sh start      # запуск (спросит ключи при первом старте)
+./run.sh start      # запуск (создаст .env при первом запуске)
 ./run.sh stop       # остановка
 ./run.sh restart    # перезапуск
 ./run.sh status     # статус
 ./run.sh logs       # смотреть лог в реальном времени
 ./run.sh env        # пересоздать .env
-./run.sh deps       # установить/обновить системные и Python-зависимости
+./run.sh deps       # установить/обновить зависимости
 ```
 
-## Автоматическое обновление
+Автоматическое обновление:
 
 ```bash
 ./update.sh         # git pull + обновление зависимостей + restart
 ```
 
-Для автообновления по расписанию:
+Системный сервис и автообновление по cron:
 
 ```bash
 ./install_service.sh
 ```
 
-Скрипт интерактивно предложит:
-- установить systemd service (Linux) или launchd agent (macOS)
-- настроить cron на автообновление раз в час
+---
 
-## Настройка `.env`
-
-```env
-TELEGRAM_TOKEN=123456:ABC...
-ALLOWED_CHAT_IDS=          # опционально: разрешённые Telegram ID через запятую
-OLLAMA_API_HOST=https://api.ollama.com
-OLLAMA_BOT_MODEL=kimi-k2.7-code:cloud
-OLLAMA_API_KEY=your_ollama_api_key
-OLLAMA_WEB_API_KEY=your_ollama_web_key  # если пусто, используется OLLAMA_API_KEY
-WHISPER_MODEL=tiny         # tiny, base, small, medium, large-v3, turbo
-WHISPER_DEVICE=auto        # cpu, cuda, auto
-WHISPER_COMPUTE_TYPE=default # int8, float16, default
-```
-
-## Команды бота
+## 📋 Команды бота
 
 | Команда | Описание |
 |---------|----------|
 | `/start` | Приветствие и меню |
 | `/models` | Список доступных моделей |
-| (голосовое сообщение) | Автоматическое распознавание речи и AI-ответ |
 | `/model <name>` | Сменить модель |
 | `/clear` | Очистить историю чата |
 | `/note <текст>` | Сохранить заметку |
 | `/memory` | Показать сохранённые факты |
-| `/memory_add [category] <текст>` | Добавить факт |
+| `/memory_add [category] <текст>` | Добавить факт в память |
 | `/remind <время> <текст>` | Добавить напоминание |
 | `/reminders` | Список напоминаний |
 | `/remind_cancel <id>` | Отменить напоминание |
@@ -123,29 +140,36 @@ WHISPER_COMPUTE_TYPE=default # int8, float16, default
 | `/report` | Ежедневный отчёт |
 | `/help` | Справка |
 
-## Поддерживаемые платформы
+> 💡 Отправь **голосовое сообщение** — бот распознает речь и ответит так же, как на текст.
 
-- **macOS** 11+ (Intel и Apple Silicon) — через Homebrew
-- **Linux**:
-  - Ubuntu / Debian / Pop!_OS / Linux Mint / Zorin OS / elementary OS
-  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux / Nobara
-  - Arch Linux / Manjaro / EndeavourOS / Garuda
-- **Windows** — запускайте скрипты внутри **WSL2** или Git Bash; нативный PowerShell не поддерживается.
+---
 
-## Требования
+## ⚙️ Настройка `.env`
 
-Всё необходимое скрипты установки ставят автоматически:
-- Python 3.10+
-- [Poetry](https://python-poetry.org/)
-- [ffmpeg](https://ffmpeg.org/) — для распознавания голосовых сообщений Telegram (OGG Opus)
-- git
+```env
+# Telegram Bot Token от @BotFather
+TELEGRAM_TOKEN=123456:ABC...
 
-Что нужно от пользователя:
-- Аккаунт/ключ Ollama Cloud (или локальная Ollama)
-- Telegram Bot Token от [@BotFather](https://t.me/BotFather)
-- на Linux — права sudo для установки системных пакетов
+# Опционально: разрешённые Telegram ID через запятую
+ALLOWED_CHAT_IDS=
 
-## Архитектура
+# Ollama Cloud (по умолчанию) или локальная Ollama
+OLLAMA_API_HOST=https://api.ollama.com
+OLLAMA_BOT_MODEL=kimi-k2.7-code:cloud
+OLLAMA_API_KEY=your_ollama_api_key
+
+# Web search API key (если пусто, используется OLLAMA_API_KEY)
+OLLAMA_WEB_API_KEY=your_ollama_web_key
+
+# Whisper: модель и параметры
+WHISPER_MODEL=tiny         # tiny, base, small, medium, large-v3, turbo
+WHISPER_DEVICE=auto        # cpu, cuda, auto
+WHISPER_COMPUTE_TYPE=default # int8, float16, default
+```
+
+---
+
+## 🏗 Архитектура
 
 ```
 main.py
@@ -155,19 +179,25 @@ main.py
 ├── bot/db.py            # SQLite: сообщения, сессии, напоминания, мониторы, память
 ├── bot/routers/
 │   ├── start.py         # /start
-│   ├── completion.py    # AI-чат, обработка сообщений, файлов
+│   ├── completion.py    # AI-чат, файлы, голос, обработка сообщений
 │   └── cron.py          # reminders, monitors, weather, search, news
-├── bot/ollama/api.py    # клиент Ollama API
+├── bot/ollama/api.py    # клиент Ollama API + OpenAI fallback
 ├── bot/tasks_exec.py    # "умное" выполнение задач (погода и др.)
+├── scripts/             # установщики и утилиты
 └── bot/keyboards/       # reply и inline клавиатуры
 ```
 
-## Безопасность
+---
+
+## 🛡 Безопасность
 
 - `.env`, логи и база данных исключены из git (`.gitignore`).
+- История git была очищена от секретов.
 - `ALLOWED_CHAT_IDS` ограничивает доступ к боту.
 - Никогда не коммитьте реальные токены и ключи.
 
-## Лицензия
+---
+
+## 📄 Лицензия
 
 MIT
