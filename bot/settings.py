@@ -32,6 +32,12 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", default="")
 # Get your key at https://ollama.com and set OLLAMA_WEB_API_KEY
 OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="") or OLLAMA_API_KEY
 
+# Whisper model for voice/audio transcription.
+# Available models: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, large-v3, turbo
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", default="tiny")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", default="auto")  # cpu, cuda, auto
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", default="default")  # int8, float16, default
+
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 

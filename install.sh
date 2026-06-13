@@ -17,8 +17,14 @@ if ! command -v poetry &> /dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+if ! command -v ffmpeg &> /dev/null; then
+    echo "⚠️  ffmpeg не найден. Он нужен для распознавания голосовых сообщений."
+    echo "   macOS: brew install ffmpeg"
+    echo "   Linux: sudo apt install ffmpeg"
+fi
+
 echo "⬇️  Installing dependencies..."
-poetry install --no-dev
+poetry install --without dev
 
 echo "⚙️  Running interactive setup..."
 poetry run python setup_env.py

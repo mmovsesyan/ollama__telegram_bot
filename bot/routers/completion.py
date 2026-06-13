@@ -3,6 +3,7 @@ from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from pydantic import BaseModel
+from typing import Any
 import asyncio
 import json
 import os
@@ -24,11 +25,37 @@ from bot.settings import (
     START_USER_MESSAGE,
     SUMMARY_PROMPT,
     SYSTEM_MESSAGE,
+    WHISPER_MODEL,
+    WHISPER_DEVICE,
+    WHISPER_COMPUTE_TYPE,
 )
 
 router = Router()
 
 db = None  # injected in __init__
+
+# Optional faster-whisper import; voice support degrades gracefully if missing.
+try:
+    from faster_whisper import WhisperModel
+    _WHISPER_AVAILABLE = True
+except Exception:
+    WhisperModel = None  # type: ignore[misc,assignment]
+    _WHISPER_AVAILABLE = False
+
+_whisper_model_instance: Any | None = None
+
+def _get_whisper_model() -> Any:
+    global _whisper_model_instance
+    if _whisper_model_instance is None:
+        if not _WHISPER_AVAILABLE or WhisperModel is None:
+            raise RuntimeError("faster-whisper is not installed.")
+        _whisper_model_instance = WhisperModel(
+            WHISPER_MODEL,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE_TYPE,
+        )
+    return _whisper_model_instance
+
 
 def _is_allowed(user_id: int) -> bool:
     if not ALLOWED_CHAT_IDS:
@@ -713,6 +740,86 @@ async def handle_document(message: Message, state: FSMContext):
     prompt = f"[Документ: {fname}]\n\n{text}\n\nПроанализируй содержимое и дай краткий обзор."
     await generate(message, user_id, prompt)
 
+
+async def _download_tg_file(file_id: str, suffix: str) -> tuple[str, str]:
+    """Download a Telegram file to a temporary file and return (path, file_path)."""
+    tg_file = await aiogram_bot.get_file(file_id)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp_path = tmp.name
+    await aiogram_bot.download_file(tg_file.file_path, tmp_path)
+    return tmp_path, tg_file.file_path or ""
+
+
+async def _transcribe_audio(file_path: str) -> str:
+    """Transcribe an audio file using faster-whisper."""
+    model = _get_whisper_model()
+    segments, _info = model.transcribe(file_path, beam_size=5, vad_filter=True)
+    return " ".join(segment.text for segment in segments).strip()
+
+
+async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: str, suffix: str, label: str):
+    """Download and transcribe a voice/audio message, then route text to the chat flow."""
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
+    if not _is_allowed(user_id):
+        return
+
+    if not _WHISPER_AVAILABLE:
+        await message.answer(
+            "🎤 Распознавание голоса недоступно. Установи faster-whisper:\n"
+            "poetry install --no-dev"
+        )
+        return
+
+    status_msg = await message.answer("🎤 Слушаю и распознаю речь...")
+    tmp_path = None
+    try:
+        tmp_path, _ = await _download_tg_file(file_id, suffix)
+        text = await _transcribe_audio(tmp_path)
+    except Exception as e:
+        err_text = str(e)
+        if "ffmpeg" in err_text.lower() or "command not found" in err_text.lower():
+            await status_msg.edit_text(
+                "❌ Для распознавания голоса нужен ffmpeg.\n"
+                "macOS: brew install ffmpeg\n"
+                "Linux: sudo apt install ffmpeg"
+            )
+        else:
+            await status_msg.edit_text(f"❌ Ошибка распознавания {label}: {err_text[:200]}")
+        print(f"[VOICE] Transcription failed: {e}")
+        return
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    if not text:
+        await status_msg.edit_text("❌ Не удалось распознать речь. Попробуй ещё раз.")
+        return
+
+    await status_msg.edit_text(f"🎤 Распознано: {text}")
+    # Route transcribed text through the normal text flow
+    await answer(message, state, override_text=text)
+
+
+@router.message(F.voice)
+async def handle_voice(message: Message, state: FSMContext):
+    voice = message.voice
+    if voice is None:
+        return
+    await _handle_voice_or_audio(message, state, voice.file_id, ".ogg", "голосового сообщения")
+
+
+@router.message(F.audio)
+async def handle_audio(message: Message, state: FSMContext):
+    audio = message.audio
+    if audio is None:
+        return
+    # Best guess suffix; faster-whisper/ffmpeg will detect format anyway.
+    suffix = ".mp3" if (audio.file_name or "").lower().endswith(".mp3") else ".audio"
+    await _handle_voice_or_audio(message, state, audio.file_id, suffix, "аудио")
+
+
 def _detect_intent(text: str) -> tuple[str | None, str | None]:
     """Detect user intent from natural language. Returns (intent, extracted_arg)."""
     import re
@@ -785,17 +892,17 @@ def _detect_intent(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-async def answer(message: Message, state: FSMContext) -> None:
+async def answer(message: Message, state: FSMContext, override_text: str | None = None) -> None:
     if message.from_user is None:
         return
     user_id = message.from_user.id
-    if message.text is None:
-        await message.answer("Я работаю только с текстом. Напишите сообщение или используйте кнопки.")
-        return
     if not _is_allowed(user_id):
         print(f"[BLOCKED] Unauthorized user {user_id}")
         return
-    text = message.text
+    text = override_text if override_text is not None else message.text
+    if text is None:
+        await message.answer("Я работаю только с текстом. Напишите сообщение или используйте кнопки.")
+        return
 
     # Handle cancel button globally
     if text == "❌ Отмена":

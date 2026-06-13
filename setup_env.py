@@ -60,6 +60,9 @@ OLLAMA_API_HOST={host}
 OLLAMA_BOT_MODEL={model}
 OLLAMA_API_KEY={api_key}
 OLLAMA_WEB_API_KEY={web_key}
+WHISPER_MODEL=tiny
+WHISPER_DEVICE=auto
+WHISPER_COMPUTE_TYPE=default
 """
 
     with open(".env", "w", encoding="utf-8") as f:

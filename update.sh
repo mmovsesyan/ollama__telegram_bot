@@ -22,7 +22,7 @@ fi
 # Update dependencies
 if command -v poetry &> /dev/null; then
     echo "📚 Обновление зависимостей..."
-    poetry install --no-dev
+    poetry install --without dev
 fi
 
 # Restart bot if running

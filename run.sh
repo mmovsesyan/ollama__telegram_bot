@@ -73,8 +73,15 @@ stop_existing() {
 
 start_bot() {
     ensure_poetry
+
+    if ! command -v ffmpeg &> /dev/null; then
+        echo "⚠️  ffmpeg не найден. Голосовые сообщения не будут распознаваться."
+        echo "   macOS: brew install ffmpeg"
+        echo "   Linux: sudo apt install ffmpeg"
+    fi
+
     echo "⬇️  Устанавливаю / обновляю зависимости..."
-    poetry install --no-dev
+    poetry install --without dev
 
     ensure_env
     stop_existing
