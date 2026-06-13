@@ -47,6 +47,35 @@ cp .env.example .env
 poetry run python main.py
 ```
 
+## Управление ботом
+
+После установки используйте `./run.sh`:
+
+```bash
+./run.sh start      # запуск (спросит ключи при первом старте)
+./run.sh stop       # остановка
+./run.sh restart    # перезапуск
+./run.sh status     # статус
+./run.sh logs       # смотреть лог в реальном времени
+./run.sh env        # пересоздать .env
+```
+
+## Автоматическое обновление
+
+```bash
+./update.sh         # git pull + обновление зависимостей + restart
+```
+
+Для автообновления по расписанию:
+
+```bash
+./install_service.sh
+```
+
+Скрипт интерактивно предложит:
+- установить systemd service (Linux) или launchd agent (macOS)
+- настроить cron на автообновление раз в час
+
 ## Настройка `.env`
 
 ```env

@@ -1,0 +1,17 @@
+[Unit]
+Description=Ollama Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=%I
+WorkingDirectory=/opt/ollama__telegram_bot
+ExecStart=/usr/bin/bash -lc 'cd /opt/ollama__telegram_bot && poetry run python main.py'
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%I/.local/bin
+StandardOutput=append:/var/log/ollama-telegram-bot.log
+StandardError=append:/var/log/ollama-telegram-bot.log
+
+[Install]
+WantedBy=multi-user.target
