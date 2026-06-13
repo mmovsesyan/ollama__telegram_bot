@@ -42,8 +42,10 @@ stop_existing() {
         rm -f "$PID_FILE"
     fi
 
-    # Fallback: kill any other bot instance by token match (safer than pkill -f main.py)
-    pkill -f "python.*main.py" 2>/dev/null || true
+    # Fallback: kill any other bot instance matching our exact main.py path
+    if [[ -f "$APP_DIR/main.py" ]]; then
+        pkill -f "python.*$APP_DIR/main.py" 2>/dev/null || true
+    fi
 }
 
 start_bot() {
@@ -55,7 +57,7 @@ start_bot() {
     stop_existing
 
     echo "🚀 Запускаю бота..."
-    nohup poetry run python main.py >> "$LOG_FILE" 2>&1 &
+    nohup poetry run python "$APP_DIR/main.py" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "✅ Бот запущен. PID: $(cat "$PID_FILE")"
     echo "   Лог: tail -f $LOG_FILE"

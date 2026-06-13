@@ -484,7 +484,10 @@ async def btn_remind(message: Message, state: FSMContext):
     await message.answer("Выберите действие:")
 
 
-async def _process_remind(user_id: int, text: str):
+async def _process_remind(user_id: int, text: str, action: str = "notify"):
+    trigger_at, recurring = parse_reminder(text)
+
+    # Strip the time portion from the beginning to get the reminder content
     time_patterns = [
         r"^(через \d+ (?:минут|час|день|дней|дня))",
         r"^(завтра в \d{1,2}:\d{2})",
@@ -492,15 +495,12 @@ async def _process_remind(user_id: int, text: str):
         r"^(\d{2}:\d{2})",
     ]
 
-    trigger_at = None
     content = text
-
     for pattern in time_patterns:
         match = re.match(pattern, text)
         if match:
             time_str = match.group(1)
             content = text[len(time_str):].strip()
-            trigger_at = parse_time(time_str)
             break
 
     if not trigger_at:
@@ -509,13 +509,17 @@ async def _process_remind(user_id: int, text: str):
     reminder_id = db.add_reminder(
         user_id=user_id,
         content=content,
-        trigger_at=trigger_at.isoformat()
+        trigger_at=trigger_at.isoformat(),
+        recurring=recurring,
+        action=action,
     )
+
+    rec_label = f" ({recurring})" if recurring else ""
 
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=user_id,
-        text=f"⏰ Напоминание #{reminder_id} установлено на {trigger_at.strftime('%Y-%m-%d %H:%M')}\n"
+        text=f"⏰ Напоминание #{reminder_id} установлено на {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
              f"Текст: {content}",
     )
 

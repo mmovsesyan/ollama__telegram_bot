@@ -1,8 +1,8 @@
 from aiogram import Router
 from aiogram.filters.command import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardRemove
 
-from bot.keyboards.reply import base_keyboard
+from bot.keyboards.reply import command_keyboard
 
 router = Router()
 
@@ -11,27 +11,24 @@ router = Router()
 async def start_command(message: Message) -> None:
     await message.answer(
         "Привет! Я AI-бот на базе Ollama.\n\n"
-        "🤖 Основные команды:\n"
-        "/models — список моделей\n"
-        "/model <name> — сменить модель\n"
-        "/clear — очистить историю\n\n"
-        "🌐 Поиск в интернете:\n"
-        "/search <запрос> — поиск через Ollama Web\n"
-        "/weather <город> — погода\n"
-        "/news — актуальные новости\n\n"
-        "📝 Память и заметки:\n"
-        "/note <текст> — сохранить заметку\n"
-        "/memory_add <категория> <текст> — сохранить факт\n"
-        "/memory — показать все факты\n\n"
+        "Кнопки внизу — быстрый доступ к командам:\n\n"
+        "🤖 AI:\n"
+        "  🤖 Модели — список моделей\n"
+        "  ❓ Помощь — справка\n"
+        "  🗑 Очистить — сбросить чат\n\n"
+        "🌐 Поиск:\n"
+        "  🔍 Поиск — в интернете\n"
+        "  🌤 Погода — по городу\n"
+        "  📰 Новости — актуальные\n\n"
+        "📝 Память:\n"
+        "  🧠 Память — факты и заметки\n"
+        "  📝 Заметка — сохранить мысль\n\n"
         "⏰ Напоминания:\n"
-        "/remind <время> <текст> — добавить напоминание\n"
-        "/reminders — список напоминаний\n\n"
+        "  ⏰ Напоминание — добавить\n\n"
         "🔍 Мониторинг:\n"
-        "/monitor_add <name> <url> [interval] — мониторинг сайта\n"
-        "/monitors — список мониторов\n\n"
+        "  ➕ Монитор — добавить сайт\n"
+        "  🔍 Мониторы — список\n\n"
         "📊 Другое:\n"
-        "/report — сводка\n"
-        "/help — полная справка\n\n"
-        "Напишите что угодно, чтобы начать разговор.",
-        reply_markup=base_keyboard,
+        "  📊 Отчёт — сводка\n\n"
+        "Или напишите что угодно для разговора с AI.",
     )

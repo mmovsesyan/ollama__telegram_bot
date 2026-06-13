@@ -12,6 +12,11 @@ class Database:
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            # Migrate reminders table: add action column if missing
+            try:
+                conn.execute("ALTER TABLE reminders ADD COLUMN action TEXT DEFAULT 'notify'")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,11 +191,11 @@ class Database:
             return prefs['notes']
         return ""
 
-    def add_reminder(self, user_id: int, content: str, trigger_at: Optional[str] = None, recurring: Optional[str] = None) -> int:
+    def add_reminder(self, user_id: int, content: str, trigger_at: Optional[str] = None, recurring: Optional[str] = None, action: Optional[str] = None) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO reminders (user_id, content, trigger_at, recurring) VALUES (?, ?, ?, ?)",
-                (user_id, content, trigger_at, recurring)
+                "INSERT INTO reminders (user_id, content, trigger_at, recurring, action) VALUES (?, ?, ?, ?, ?)",
+                (user_id, content, trigger_at, recurring, action)
             )
             conn.commit()
             return cursor.lastrowid
@@ -212,6 +217,14 @@ class Database:
                 (user_id,)
             )
             return [dict(r) for r in cursor.fetchall()]
+
+    def reschedule_reminder(self, reminder_id: int, new_trigger_at: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE reminders SET trigger_at = ? WHERE id = ?",
+                (new_trigger_at, reminder_id)
+            )
+            conn.commit()
 
     def disable_reminder(self, reminder_id: int):
         with sqlite3.connect(self.db_path) as conn:

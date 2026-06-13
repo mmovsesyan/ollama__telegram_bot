@@ -1,5 +1,10 @@
 import os
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv()
+
 # Telegram token
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", default="")
 
@@ -17,14 +22,15 @@ START_USER_MESSAGE = ""
 SYSTEM_MESSAGE = "You are a helpful assistant. Answer concisely and clearly."
 
 # Ollama server configuration
-OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST", default="http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="llama2:13b-chat")
+OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST", default="https://api.ollama.com")
+OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud")
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", default="")
 
 # Ollama Web Search API (https://ollama.com/api/web_search)
 # Get your key at https://ollama.com and set OLLAMA_WEB_API_KEY
-OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="")
+OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="") or OLLAMA_API_KEY
 
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
