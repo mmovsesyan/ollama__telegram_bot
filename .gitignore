@@ -1,2 +1,43 @@
-*.pyc
-.vscode
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Database & logs
+data/
+*.db
+*.db-journal
+*.sqlite3
+bot.log
+*.log
+
+# Backups & temp files
+*.bak
+*.tmp
+*.temp
+.DS_Store
+
+# OS
+Thumbs.db
