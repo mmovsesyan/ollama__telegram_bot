@@ -236,7 +236,9 @@ class LLMIntentRouter:
         days = _detect_days(message_text)
         weather_text = re.sub(
             r"на\s+(?:неделю|выходные|завтра|послезавтра|ближайш\w+|\d+\s*(?:день|дня|дней|сутки|суток))|"
-            r"this\s+week|next\s+\d+\s+days?|tomorrow",
+            r"\b(?:неделю|неделя|выходные|завтра|послезавтра|tomorrow)\b|"
+            r"\d+\s*(?:день|дня|дней|сутки|суток)|"
+            r"this\s+week|next\s+\d+\s+days?",
             " ",
             t,
             flags=re.IGNORECASE,

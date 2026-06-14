@@ -6,20 +6,22 @@ from bot.services.weather import get_forecast, get_weather
 
 
 _FORECAST_PHRASE_RE = re.compile(
-    r"прогноз|на\s+(?:неделю|выходные|завтра|послезавтра)|"
+    r"прогноз|неделю|неделя|выходные|"
+    r"(?<!\w)(?:на\s+)?завтра(?!\w)|послезавтра|"
     r"на\s+\d+\s*(?:день|дня|дней|сутки|суток)|"
-    r"на\s+ближайш\w*|"
-    r"forecast|next\s+\d+\s+days?|this\s+week",
+    r"\d+\s*(?:день|дня|дней|сутки|суток)|"
+    r"на\s+ближайш\w*|ближайш\w*\s+(?:неделю|дни|дней)|"
+    r"forecast|next\s+\d+\s+days?|this\s+week|tomorrow",
     re.IGNORECASE,
 )
 _DAYS_RE = re.compile(
-    r"на\s+(\d{1,2})\s*(?:день|дня|дней|сутки|суток)|next\s+(\d{1,2})\s+days?",
+    r"(?:на\s+)?(\d{1,2})\s*(?:день|дня|дней|сутки|суток)|next\s+(\d{1,2})\s+days?",
     re.IGNORECASE,
 )
 
 
 def _detect_days(text: str) -> int | None:
-    """Pull a day-count out of phrases like 'на 5 дней' or 'next 3 days'.
+    """Pull a day-count out of phrases like 'на 5 дней', '3 дня', 'next 3 days'.
     Returns None if no explicit number was given."""
     if not text:
         return None
@@ -28,14 +30,14 @@ def _detect_days(text: str) -> int | None:
         n = int(m.group(1) or m.group(2))
         return max(1, min(n, 16))
     low = text.lower()
-    if "неделю" in low or "this week" in low:
+    if "недел" in low or "this week" in low:
         return 7
     if "выходные" in low:
         return 3
-    if "завтра" in low or "tomorrow" in low:
-        return 2
     if "послезавтра" in low:
         return 3
+    if "завтра" in low or "tomorrow" in low:
+        return 2
     return None
 
 

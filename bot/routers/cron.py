@@ -21,7 +21,7 @@ from bot.ollama.dto import OllamaErrorChunk
 from bot.security import is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
 from bot.services.profile import format_local
-from bot.services.weather import get_weather
+from bot.services.weather import get_forecast, get_weather
 from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
 from bot.states import BotStates
 
@@ -1798,7 +1798,8 @@ async def cmd_weather(message: Message, state: FSMContext):
     if len(parts) < 2:
         await message.answer(
             "🌤 Введи название города:\n"
-            "Пример: Moscow",
+            "Пример: Москва\n"
+            "Или прогноз: «Москва на неделю», «Сочи 5 дней»",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_weather)
@@ -1816,15 +1817,44 @@ async def btn_weather(message: Message, state: FSMContext):
         return
     await message.answer(
         "🌤 Введи название города:\n"
-        "Пример: Moscow",
+        "Пример: Москва\n"
+        "Или прогноз: «Москва на неделю», «Сочи 5 дней»",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_weather)
 
 
-async def _process_weather(message: Message, city: str):
-    await message.answer(f"🌤 Ищу погоду: {city}...")
-    text, error = await get_weather(city)
+async def _process_weather(message: Message, raw: str):
+    """Handle both '/weather Moscow' and '/weather Moscow на неделю'.
+    Strips trailing duration phrases from the city, then routes to
+    get_forecast or get_weather depending on intent."""
+    from bot.intent.tools.weather import _FORECAST_PHRASE_RE, _detect_days
+
+    raw = (raw or "").strip()
+    days = _detect_days(raw)
+    is_forecast = bool(days) or bool(_FORECAST_PHRASE_RE.search(raw))
+
+    # Strip trailing duration / forecast phrases so 'Москва на неделю'
+    # leaves just 'Москва' as the city.
+    city = re.sub(
+        r"\s*(?:на\s+)?(?:неделю|неделя|выходные|завтра|послезавтра|"
+        r"ближайш\w*|прогноз\w*|forecast|this\s+week|tomorrow|"
+        r"\d+\s*(?:день|дня|дней|сутки|суток)|next\s+\d+\s+days?)\s*",
+        " ",
+        raw,
+        flags=re.IGNORECASE,
+    ).strip(" ,.;-—")
+
+    if not city:
+        await message.answer("🌤 Не понял город. Пример: Москва", reply_markup=command_keyboard)
+        return
+
+    label = "прогноз" if is_forecast else "погоду"
+    await message.answer(f"🌤 Ищу {label}: {city}...")
+    if is_forecast:
+        text, error = await get_forecast(city, days or 7)
+    else:
+        text, error = await get_weather(city)
     if error:
         await message.answer(f"❌ Ошибка погоды: {error}", reply_markup=command_keyboard)
         return
