@@ -124,7 +124,7 @@ async def main() -> None:
                     if smart_result is not None:
                         await aiogram_bot.send_message(
                             chat_id=user_id,
-                            text=f"⏰ Задача #{r['id']}: {content}\n\n{smart_result[:3800]}",
+                            text=f"⏰ Задача: {content}\n\n{smart_result[:3800]}",
                         )
                     else:
                         # Fallback to generic LLM
@@ -144,12 +144,12 @@ async def main() -> None:
                             response = "(пустой ответ от модели)"
                         await aiogram_bot.send_message(
                             chat_id=user_id,
-                            text=f"⏰ Задача #{r['id']}: {content}\n\n{response[:3800]}",
+                            text=f"⏰ Задача: {content}\n\n{response[:3800]}",
                         )
                 else:
                     await aiogram_bot.send_message(
                         chat_id=user_id,
-                        text=f"⏰ Напоминание #{r['id']}:\n{content}"
+                        text=f"⏰ Напоминание:\n{content}"
                     )
 
                 recurring = r.get('recurring')

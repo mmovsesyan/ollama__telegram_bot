@@ -403,7 +403,7 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
     if not trigger_at:
         trigger_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
-    reminder_id = db.add_reminder(
+    db.add_reminder(
         user_id=user_id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -416,7 +416,7 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=user_id,
-        text=f"✅ Напоминание #{reminder_id} добавлено\n"
+        text=f"✅ Напоминание добавлено\n"
              f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
              f"📝 Текст: {content}",
         reply_markup=command_keyboard,
@@ -438,7 +438,7 @@ async def _process_task_from_text(user_id: int, text: str):
     if not trigger_at:
         trigger_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
-    rid = db.add_reminder(
+    db.add_reminder(
         user_id=user_id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -449,7 +449,7 @@ async def _process_task_from_text(user_id: int, text: str):
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=user_id,
-        text=f"✅ Задача #{rid} добавлена\n"
+        text=f"✅ Задача добавлена\n"
              f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
              f"🤖 Режим: AI-выполнение\n"
              f"📝 Текст: {content}",

@@ -57,6 +57,7 @@ class Database:
                     trigger_at TIMESTAMP,
                     recurring TEXT,
                     enabled INTEGER DEFAULT 1,
+                    action TEXT DEFAULT 'notify',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -71,6 +72,7 @@ class Database:
                     last_check TIMESTAMP,
                     last_status INTEGER,
                     enabled INTEGER DEFAULT 1,
+                    alerted INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -94,6 +96,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
                 CREATE INDEX IF NOT EXISTS idx_summaries_session ON summaries(session_id);
                 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
+                CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(enabled, trigger_at);
+                CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id, enabled);
             """)
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
@@ -253,9 +257,16 @@ class Database:
             return dict(row) if row else None
 
     def disable_reminder(self, reminder_id: int):
+        """Hard-delete the reminder. Kept the name `disable_reminder` for
+        backward compat with callers; behavior is now permanent removal so
+        DB-side ids don't accumulate after the user clears their list."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE reminders SET enabled = 0 WHERE id = ?", (reminder_id,))
+            conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             conn.commit()
+
+    def delete_reminder(self, reminder_id: int):
+        """Alias for disable_reminder; new callers should prefer this name."""
+        self.disable_reminder(reminder_id)
 
     def add_monitor(self, user_id: int, name: str, url: str, method: str = 'GET', expected_status: int = 200, interval: int = 300) -> int:
         with sqlite3.connect(self.db_path) as conn:

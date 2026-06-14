@@ -410,7 +410,7 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
     else:
         trigger_at = now + timedelta(minutes=5)
 
-    rid = db.add_reminder(
+    db.add_reminder(
         user_id=callback.from_user.id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -419,7 +419,7 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
     )
     rec_label = f" ({recurring})" if recurring else ""
     await callback.message.answer(
-        f"✅ Напоминание #{rid} добавлено\n"
+        f"✅ Напоминание добавлено\n"
         f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
         f"📝 Текст: {content}",
         reply_markup=command_keyboard,
@@ -457,7 +457,7 @@ async def process_remind_time(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         await state.clear()
         return
-    rid = db.add_reminder(
+    db.add_reminder(
         user_id=message.from_user.id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -466,7 +466,7 @@ async def process_remind_time(message: Message, state: FSMContext):
     )
     rec_label = f" ({recurring})" if recurring else ""
     await message.answer(
-        f"✅ Напоминание #{rid} добавлено\n"
+        f"✅ Напоминание добавлено\n"
         f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
         f"📝 Текст: {content}",
         reply_markup=command_keyboard,
@@ -545,7 +545,7 @@ async def cmd_remind_cancel(message: Message, state: FSMContext):
             await message.answer("Нет доступа к этому напоминанию.", reply_markup=command_keyboard)
             return
         db.disable_reminder(rid)
-        await message.answer(f"✅ Напоминание #{rid} удалено.", reply_markup=command_keyboard)
+        await message.answer("✅ Напоминание удалено.", reply_markup=command_keyboard)
     except ValueError:
         await message.answer("Укажи числовой ID напоминания.", reply_markup=command_keyboard)
 
@@ -569,7 +569,7 @@ async def process_remind_cancel(message: Message, state: FSMContext):
             await state.clear()
             return
         db.disable_reminder(rid)
-        await message.answer(f"✅ Напоминание #{rid} удалено.", reply_markup=command_keyboard)
+        await message.answer("✅ Напоминание удалено.", reply_markup=command_keyboard)
     except ValueError:
         await message.answer("Укажи числовой ID напоминания.", reply_markup=cancel_keyboard)
     await state.clear()
@@ -650,7 +650,7 @@ async def process_task_time_manual(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         await state.clear()
         return
-    rid = db.add_reminder(
+    db.add_reminder(
         user_id=message.from_user.id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -659,7 +659,7 @@ async def process_task_time_manual(message: Message, state: FSMContext):
     )
     rec_label = f" ({recurring})" if recurring else ""
     await message.answer(
-        f"✅ Задача #{rid} добавлена\n"
+        f"✅ Задача добавлена\n"
         f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
         f"🤖 Режим: AI-выполнение\n"
         f"📝 Текст: {content}",
@@ -733,7 +733,7 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
         await callback.answer("База данных недоступна", show_alert=True)
         await state.clear()
         return
-    rid = db.add_reminder(
+    db.add_reminder(
         user_id=callback.from_user.id,
         content=content,
         trigger_at=trigger_at.isoformat(),
@@ -744,7 +744,7 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=callback.from_user.id,
-        text=f"✅ Задача #{rid} добавлена\n"
+        text=f"✅ Задача добавлена\n"
              f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
              f"🤖 Режим: AI-выполнение\n"
              f"📝 Текст: {content}",
@@ -1430,12 +1430,12 @@ async def cb_del_reminder(callback: CallbackQuery):
             await callback.answer("Нет доступа", show_alert=True)
             return
         db.disable_reminder(rid)
-        await callback.answer(f"Напоминание #{rid} удалено")
+        await callback.answer("Напоминание удалено")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await callback.message.edit_text(f"✅ Напоминание #{rid} удалено.")
+        await callback.message.edit_text("✅ Напоминание удалено.")
     except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
 
@@ -1464,7 +1464,7 @@ async def cb_edit_reminder(callback: CallbackQuery, state: FSMContext):
     is_task = reminder.get('action') == 'execute'
     label = "задачу" if is_task else "напоминание"
     await callback.message.answer(
-        f"✏️ Редактировать {label} #{rid}\n\n"
+        f"✏️ Редактировать {label}\n\n"
         f"📝 {reminder.get('content', '')}\n"
         f"🕐 {reminder.get('trigger_at', 'ASAP')}\n\n"
         f"Что менять?",
@@ -1542,7 +1542,7 @@ async def process_edit_reminder_content(message: Message, state: FSMContext):
         return
     db.update_reminder_content(rid, new_content)
     await message.answer(
-        f"✅ #{rid} обновлено\n📝 {new_content}",
+        f"✅ Обновлено\n📝 {new_content}",
         reply_markup=command_keyboard,
     )
     await state.clear()
@@ -1580,7 +1580,7 @@ async def process_edit_reminder_time(message: Message, state: FSMContext):
     db.update_reminder_schedule(rid, trigger_at.isoformat(), recurring)
     rec_label = f" 🔁 {recurring}" if recurring else ""
     await message.answer(
-        f"✅ #{rid} обновлено\n🕐 {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}",
+        f"✅ Обновлено\n🕐 {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}",
         reply_markup=command_keyboard,
     )
     await state.clear()
