@@ -1,5 +1,6 @@
 from bot.intent.tools.base import BaseTool
 from bot.intent.tools.chat import ChatTool
+from bot.intent.tools.kb_search import KbSearchTool
 from bot.intent.tools.persistence import MemoryTool, MonitorTool, NoteTool, PlanTool
 from bot.intent.tools.remind import RemindTool
 from bot.intent.tools.search import NewsTool, SearchTool
@@ -20,6 +21,7 @@ class ToolRegistry:
             MemoryTool.name: MemoryTool(),
             MonitorTool.name: MonitorTool(),
             PlanTool.name: PlanTool(),
+            KbSearchTool.name: KbSearchTool(),
         }
 
     @property

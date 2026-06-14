@@ -60,7 +60,9 @@ async def main() -> None:
     smart_handler.db = db
     start.db = db
     from bot.services import reminders as reminders_service
+    from bot.services import kb as kb_service
     reminders_service.db = db
+    kb_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE

@@ -61,7 +61,7 @@ def _format_trigger(trigger_at, user_id: int) -> str:
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
     "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
-    "📝 Заметка", "📒 Список", "🧠 Память", "🌤 Погода", "📰 Новости",
+    "📝 Заметка", "📒 Список", "🧠 Память", "📚 База", "🌤 Погода", "📰 Новости",
     "📊 Отчёт", "❓ Помощь",
 }
 
@@ -1846,6 +1846,81 @@ async def process_weather(message: Message, state: FSMContext):
     await state.clear()
 
 
+# --- Knowledge base search ---
+
+
+@router.message(lambda m: m.text and m.text.startswith("/kb"))
+async def cmd_kb(message: Message, state: FSMContext):
+    """`/kb <query>` searches the user's KB; bare `/kb` asks for a query."""
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "📚 Что найти в базе?\n"
+            "Например: «Tesla», «Армения», «отчёт о проекте».\n"
+            "Если ничего не найду локально — посмотрю в интернете.",
+            reply_markup=cancel_keyboard,
+        )
+        await state.set_state(BotStates.waiting_kb)
+        return
+    await _process_kb(message, parts[1].strip())
+
+
+@router.message(F.text == "📚 База")
+async def btn_kb(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    await message.answer(
+        "📚 Что найти в базе?\n"
+        "Например: «Tesla», «Армения», «отчёт о проекте».\n"
+        "Если ничего не найду локально — посмотрю в интернете.",
+        reply_markup=cancel_keyboard,
+    )
+    await state.set_state(BotStates.waiting_kb)
+
+
+@router.message(BotStates.waiting_kb)
+async def process_kb(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    await _process_kb(message, message.text.strip())
+    await state.clear()
+
+
+async def _process_kb(message: Message, query: str):
+    if not query:
+        await message.answer("Введи поисковый запрос.", reply_markup=cancel_keyboard)
+        return
+    from bot.services.kb import search_kb_with_web_fallback
+    text, hits, used_web = await search_kb_with_web_fallback(
+        message.from_user.id, query, limit=5
+    )
+    if not text:
+        await message.answer(
+            f"📚 Ни в твоей базе, ни в интернете ничего по «{query}» не нашёл.",
+            reply_markup=command_keyboard,
+        )
+        return
+    await message.answer(text, reply_markup=command_keyboard)
+
+
+# --- Knowledge base end ---
+
+
 # --- News ---
 
 async def _process_news(message: Message, topic: str | None = None):
@@ -2155,6 +2230,7 @@ _BUTTON_HANDLERS["⏰ Напомнить"] = btn_remind
 _BUTTON_HANDLERS["📋 Задача"] = btn_task
 _BUTTON_HANDLERS["📝 Заметка"] = btn_note
 _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
+_BUTTON_HANDLERS["📚 База"] = btn_kb
 _BUTTON_HANDLERS["🌤 Погода"] = btn_weather
 _BUTTON_HANDLERS["🔍 Поиск"] = btn_search
 _BUTTON_HANDLERS["📰 Новости"] = btn_news

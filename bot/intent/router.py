@@ -144,6 +144,24 @@ class LLMIntentRouter:
         """
         t = message_text.lower().strip()
 
+        # 1.5 KB search — "что я говорил про X", "найди у меня про X",
+        #    "из моей базы X". Comes before generic search/news so the
+        #    user's stored knowledge wins.
+        m = re.search(
+            r"(?:что\s+я\s+говорил\s+про|что\s+у\s+меня\s+про|"
+            r"найди\s+у\s+меня(?:\s+про)?|найди\s+в\s+базе|"
+            r"поищи\s+в\s+базе|из\s+(?:моей\s+)?базы|в\s+(?:моей\s+)?базе)\s+(.+)",
+            t,
+        )
+        if m:
+            kb_query = m.group(1).strip()
+            return IntentResult(
+                intent="kb_search",
+                tool="kb_search",
+                args=IntentArgs(query=kb_query),
+                confidence=0.9,
+            )
+
         # 1. Cancel — must come first so "отмени напоминание" doesn't route
         #    to remind. We don't have a cancel tool yet, so route to chat
         #    and let the LLM (or the user via /reminders) handle it.

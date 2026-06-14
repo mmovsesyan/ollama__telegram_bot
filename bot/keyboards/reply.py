@@ -7,8 +7,8 @@ command_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌤 Погода"), KeyboardButton(text="📰 Новости")],
         [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="📋 Задача"), KeyboardButton(text="📝 Заметка")],
-        [KeyboardButton(text="📒 Список"), KeyboardButton(text="🧠 Память"), KeyboardButton(text="📊 Отчёт")],
-        [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="📒 Список"), KeyboardButton(text="🧠 Память"), KeyboardButton(text="📚 База")],
+        [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="❓ Помощь")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,

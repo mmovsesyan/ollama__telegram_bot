@@ -7,6 +7,12 @@ class Database:
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        # If migrating from a pre-FTS DB, populate the index from existing rows.
+        # No-op when the index is already in sync.
+        try:
+            self.backfill_memories_fts()
+        except Exception:
+            pass
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -27,6 +33,16 @@ class Database:
                 pass
             try:
                 conn.execute("ALTER TABLE user_prefs ADD COLUMN timezone TEXT DEFAULT 'UTC'")
+            except sqlite3.OperationalError:
+                pass
+            # Migrate memories: optional LLM-compressed summary for long entries.
+            # FTS5 indexes both content and summary so search hits either.
+            try:
+                conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'manual'")
             except sqlite3.OperationalError:
                 pass
             conn.executescript("""
@@ -100,8 +116,40 @@ class Database:
                     user_id INTEGER NOT NULL,
                     category TEXT DEFAULT 'fact',
                     content TEXT NOT NULL,
+                    summary TEXT,
+                    source TEXT DEFAULT 'manual',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+
+                -- Full-text search over memories. Sync via triggers below.
+                -- Indexes both raw content and the optional LLM summary so a
+                -- query hits whichever form is more discoverable.
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    content,
+                    summary,
+                    user_id UNINDEXED,
+                    category UNINDEXED,
+                    content='memories',
+                    content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, content, summary, user_id, category)
+                    VALUES (new.id, new.content, COALESCE(new.summary, ''), new.user_id, new.category);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, summary, user_id, category)
+                    VALUES ('delete', old.id, old.content, COALESCE(old.summary, ''), old.user_id, old.category);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, summary, user_id, category)
+                    VALUES ('delete', old.id, old.content, COALESCE(old.summary, ''), old.user_id, old.category);
+                    INSERT INTO memories_fts(rowid, content, summary, user_id, category)
+                    VALUES (new.id, new.content, COALESCE(new.summary, ''), new.user_id, new.category);
+                END;
 
                 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -361,14 +409,90 @@ class Database:
             )
             return [dict(r) for r in cursor.fetchall()]
 
-    def add_memory(self, user_id: int, category: str, content: str) -> int:
+    def add_memory(
+        self,
+        user_id: int,
+        category: str,
+        content: str,
+        summary: str | None = None,
+        source: str = "manual",
+    ) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO memories (user_id, category, content) VALUES (?, ?, ?)",
-                (user_id, category, content)
+                "INSERT INTO memories (user_id, category, content, summary, source) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, category, content, summary, source),
             )
             conn.commit()
             return cursor.lastrowid
+
+    def update_memory_summary(self, memory_id: int, summary: str):
+        """Attach an LLM-generated summary to an existing memory. Triggers
+        keep the FTS index in sync automatically."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE memories SET summary = ? WHERE id = ?",
+                (summary, memory_id),
+            )
+            conn.commit()
+
+    def search_memories(
+        self,
+        user_id: int,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Full-text search over the user's memories. Returns rows ordered
+        by FTS5 BM25 relevance.
+
+        Each query token gets a prefix wildcard (foo*) so Russian word
+        endings ("яблоки" matches "яблок"). Tokens are ORed by default
+        so partial matches still surface; FTS5 ranks the full-match hits
+        highest. Returns empty list if FTS is missing (pre-migration)."""
+        if not query or not query.strip():
+            return []
+        # Strip punctuation that breaks FTS5 query syntax.
+        cleaned = query.replace('"', " ").replace("'", " ").replace("(", " ").replace(")", " ")
+        tokens = [tok.strip() for tok in cleaned.split() if tok.strip()]
+        if not tokens:
+            return []
+        # Prefix wildcard catches inflected forms; OR keeps recall high.
+        # FTS5 sorts by BM25 anyway so the most-matching row wins.
+        fts_q = " OR ".join(f"{tok}*" for tok in tokens)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            try:
+                cursor = conn.execute(
+                    "SELECT m.id, m.user_id, m.category, m.content, m.summary, "
+                    "m.source, m.created_at, "
+                    "bm25(memories_fts) AS rank "
+                    "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "
+                    "WHERE memories_fts MATCH ? AND m.user_id = ? "
+                    "ORDER BY rank LIMIT ?",
+                    (fts_q, user_id, limit),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except sqlite3.OperationalError:
+                return []
+
+    def backfill_memories_fts(self) -> int:
+        """One-time helper: populate FTS index from existing memories rows
+        when the index is empty (e.g. after migrating an old database).
+        Returns the number of rows backfilled."""
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+                mem_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                if fts_count >= mem_count:
+                    return 0
+                conn.execute(
+                    "INSERT INTO memories_fts(rowid, content, summary, user_id, category) "
+                    "SELECT id, content, COALESCE(summary, ''), user_id, category FROM memories"
+                )
+                conn.commit()
+                return mem_count - fts_count
+            except sqlite3.OperationalError:
+                return 0
 
     def get_memories(self, user_id: int, category: str | None = None) -> list[dict]:
         with sqlite3.connect(self.db_path) as conn:

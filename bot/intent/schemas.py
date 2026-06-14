@@ -25,6 +25,7 @@ ALLOWED_INTENTS = Literal[
     "news",
     "add_monitor",
     "generate_plan",
+    "kb_search",
     "clarify",
     "cancel",
     "help",
@@ -41,6 +42,7 @@ ALLOWED_TOOLS = Literal[
     "news",
     "monitor",
     "plan",
+    "kb_search",
 ]
 
 
