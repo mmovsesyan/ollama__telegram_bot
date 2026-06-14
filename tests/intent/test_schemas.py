@@ -15,7 +15,7 @@ class TestIntentResult:
         assert result.intent == "create_reminder"
         assert result.confidence == 0.92
 
-    def test_invalid_tool_rejected(self):
+    def test_invalid_confidence_rejected(self):
         data = {
             "intent": "create_reminder",
             "tool": "remind",
@@ -25,7 +25,58 @@ class TestIntentResult:
         with pytest.raises(ValueError):
             IntentResult.model_validate(data)
 
+    def test_invalid_intent_rejected(self):
+        data = {
+            "intent": "not_allowed",
+            "tool": "chat",
+            "confidence": 0.8,
+        }
+        with pytest.raises(ValueError):
+            IntentResult.model_validate(data)
+
+    def test_invalid_tool_rejected(self):
+        data = {
+            "intent": "chat",
+            "tool": "not_allowed",
+            "confidence": 0.8,
+        }
+        with pytest.raises(ValueError):
+            IntentResult.model_validate(data)
+
     def test_tool_result(self):
         tr = ToolResult(text="Reminder created", success=True)
         assert tr.text == "Reminder created"
         assert tr.success is True
+
+
+class TestIntentArgs:
+    def test_default_intent_args(self):
+        args = IntentArgs()
+        assert args.content is None
+        assert args.trigger_at is None
+        assert args.recurring is None
+        assert args.query is None
+        assert args.city is None
+        assert args.url is None
+        assert args.name is None
+        assert args.interval is None
+        assert args.plan_text is None
+
+
+class TestToolContext:
+    def test_tool_context_creation(self):
+        intent_result = IntentResult(
+            intent="chat", tool="chat", confidence=0.9
+        )
+        args = IntentArgs(content="hello")
+        ctx = ToolContext(
+            user_id=123,
+            message_text="hello",
+            args=args,
+            intent_result=intent_result,
+        )
+        assert ctx.user_id == 123
+        assert ctx.message_text == "hello"
+        assert ctx.args.content == "hello"
+        assert ctx.intent_result.intent == "chat"
+        assert ctx.intent_result.tool == "chat"
