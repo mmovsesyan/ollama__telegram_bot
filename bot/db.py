@@ -20,6 +20,15 @@ class Database:
                 conn.execute("ALTER TABLE monitors ADD COLUMN alerted INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Migrate user_prefs: add display name and timezone for localization
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN name TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN timezone TEXT DEFAULT 'UTC'")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +56,8 @@ class Database:
                     language TEXT DEFAULT 'ru',
                     style TEXT DEFAULT 'concise',
                     notes TEXT,
+                    name TEXT,
+                    timezone TEXT DEFAULT 'UTC',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 

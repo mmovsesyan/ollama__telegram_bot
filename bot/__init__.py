@@ -58,6 +58,7 @@ async def main() -> None:
     completion.db = db
     cron.db = db
     smart_handler.db = db
+    start.db = db
     from bot.services import reminders as reminders_service
     reminders_service.db = db
 

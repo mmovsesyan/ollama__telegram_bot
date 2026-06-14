@@ -20,6 +20,7 @@ from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
 from bot.security import is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
+from bot.services.profile import format_local
 from bot.services.weather import get_weather
 from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
 from bot.states import BotStates
@@ -31,6 +32,31 @@ _process_remind = reminders_service._process_remind
 _process_task_from_text = reminders_service._process_task_from_text
 
 db = None  # injected in __init__
+
+
+def _user_tz(user_id: int) -> str | None:
+    """Look up the user's saved timezone for display + parsing."""
+    if db is None:
+        return None
+    try:
+        prefs = db.get_user_prefs(user_id)
+    except Exception:
+        return None
+    return (prefs or {}).get("timezone") or None
+
+
+def _format_trigger(trigger_at, user_id: int) -> str:
+    """Render a stored UTC trigger_at as a human-readable string in the
+    user's local timezone. Accepts either a datetime object or an ISO string.
+    Returns 'ASAP' if the value is missing or unparseable."""
+    if trigger_at is None or trigger_at == "":
+        return "ASAP"
+    if isinstance(trigger_at, str):
+        try:
+            trigger_at = datetime.fromisoformat(trigger_at)
+        except Exception:
+            return trigger_at  # pragma: no cover — show raw if mangled
+    return format_local(trigger_at, _user_tz(user_id))
 
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
@@ -420,7 +446,7 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
     rec_label = f" ({recurring})" if recurring else ""
     await callback.message.answer(
         f"✅ Напоминание добавлено\n"
-        f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+        f"🕐 Сработает: {_format_trigger(trigger_at, callback.from_user.id)}{rec_label}\n"
         f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
@@ -446,7 +472,7 @@ async def process_remind_time(message: Message, state: FSMContext):
         await state.clear()
         return
     time_text = message.text.strip()
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_text)
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_text, tz_name=_user_tz(message.from_user.id))
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
@@ -467,7 +493,7 @@ async def process_remind_time(message: Message, state: FSMContext):
     rec_label = f" ({recurring})" if recurring else ""
     await message.answer(
         f"✅ Напоминание добавлено\n"
-        f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+        f"🕐 Сработает: {_format_trigger(trigger_at, message.from_user.id)}{rec_label}\n"
         f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
@@ -501,7 +527,7 @@ async def cmd_reminders(message: Message, state: FSMContext):
     text = "📒 Активные напоминания и задачи:\n\n"
     buttons = []
     for idx, r in enumerate(reminders, 1):
-        time_str = r.get('trigger_at', 'ASAP')
+        time_str = _format_trigger(r.get('trigger_at'), message.from_user.id)
         content = r.get('content', '')
         rec = r.get('recurring')
         is_task = r.get('action') == 'execute'
@@ -639,7 +665,7 @@ async def process_task_time_manual(message: Message, state: FSMContext):
     data = await state.get_data()
     content = data.get("task_content", "")
     time_str = message.text.strip()
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_str)
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_str, tz_name=_user_tz(message.from_user.id))
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
@@ -660,7 +686,7 @@ async def process_task_time_manual(message: Message, state: FSMContext):
     rec_label = f" ({recurring})" if recurring else ""
     await message.answer(
         f"✅ Задача добавлена\n"
-        f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+        f"🕐 Сработает: {_format_trigger(trigger_at, message.from_user.id)}{rec_label}\n"
         f"🤖 Режим: AI-выполнение\n"
         f"📝 Текст: {content}",
         reply_markup=command_keyboard,
@@ -745,7 +771,7 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
     await aiogram_bot.send_message(
         chat_id=callback.from_user.id,
         text=f"✅ Задача добавлена\n"
-             f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+             f"🕐 Сработает: {_format_trigger(trigger_at, callback.from_user.id)}{rec_label}\n"
              f"🤖 Режим: AI-выполнение\n"
              f"📝 Текст: {content}",
         reply_markup=command_keyboard,
@@ -1466,7 +1492,7 @@ async def cb_edit_reminder(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         f"✏️ Редактировать {label}\n\n"
         f"📝 {reminder.get('content', '')}\n"
-        f"🕐 {reminder.get('trigger_at', 'ASAP')}\n\n"
+        f"🕐 {_format_trigger(reminder.get('trigger_at'), callback.from_user.id)}\n\n"
         f"Что менять?",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -1570,7 +1596,7 @@ async def process_edit_reminder_time(message: Message, state: FSMContext):
         await message.answer("Нет доступа к этой записи.", reply_markup=command_keyboard)
         await state.clear()
         return
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(message.text.strip())
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(message.text.strip(), tz_name=_user_tz(message.from_user.id))
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: «через 5 минут», «завтра в 9:00», «каждый день в 7:00».",
@@ -1580,7 +1606,7 @@ async def process_edit_reminder_time(message: Message, state: FSMContext):
     db.update_reminder_schedule(rid, trigger_at.isoformat(), recurring)
     rec_label = f" 🔁 {recurring}" if recurring else ""
     await message.answer(
-        f"✅ Обновлено\n🕐 {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}",
+        f"✅ Обновлено\n🕐 {_format_trigger(trigger_at, message.from_user.id)}{rec_label}",
         reply_markup=command_keyboard,
     )
     await state.clear()

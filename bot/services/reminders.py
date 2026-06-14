@@ -2,8 +2,20 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from bot.keyboards.reply import command_keyboard
+from bot.services.profile import format_local, get_zoneinfo
 
 db = None  # injected from bot.__init__
+
+
+def _user_tz_name(user_id: int) -> str | None:
+    """Look up the user's saved timezone, or None if onboarding wasn't done."""
+    if db is None:
+        return None
+    try:
+        prefs = db.get_user_prefs(user_id)
+    except Exception:
+        return None
+    return (prefs or {}).get("timezone") or None
 
 
 def _time_from_period_word(word: str | None) -> tuple[int, int]:
@@ -187,12 +199,17 @@ def parse_time(text: str) -> datetime:
 _PARSE_FALLBACK_DELTA = timedelta(minutes=5)
 
 
-def parse_reminder_strict(text: str) -> tuple[datetime, str | None, bool]:
+def parse_reminder_strict(text: str, tz_name: str | None = None) -> tuple[datetime, str | None, bool]:
     """Like parse_reminder, but the third element is True when the input
     contained recognizable time tokens, False when the default fallback
-    (now + 5 minutes) was used."""
+    (now + 5 minutes) was used.
+
+    When tz_name is provided, time tokens like "9:00" are interpreted as
+    LOCAL time in that zone and the returned datetime is converted to UTC
+    for storage. Without tz_name, behavior is the legacy UTC-everywhere.
+    """
     before = datetime.now(timezone.utc)
-    dt, recurrence = _parse_reminder_core(text)
+    dt, recurrence = _parse_reminder_core(text, tz_name=tz_name)
     after = datetime.now(timezone.utc)
 
     # Heuristic: if there's no recurrence AND the result is very close to the
@@ -206,18 +223,40 @@ def parse_reminder_strict(text: str) -> tuple[datetime, str | None, bool]:
     return dt, recurrence, parsed
 
 
-def parse_reminder(text: str) -> tuple[datetime, str | None]:
+def parse_reminder(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
     """Parse reminder time. Returns (datetime, recurrence_pattern).
     recurrence_pattern: daily, weekday, weekend, weekly, monthly,
                         monday..sunday, or None.
 
     On unrecognized input, returns (now + 5 minutes, None) as a sane default.
-    Use `parse_reminder_strict` to know whether the default was used."""
-    return _parse_reminder_core(text)
+    Use `parse_reminder_strict` to know whether the default was used.
+
+    If tz_name is given, time-of-day tokens ("9:00") are interpreted as
+    local time. Otherwise they're treated as UTC (legacy)."""
+    return _parse_reminder_core(text, tz_name=tz_name)
 
 
-def _parse_reminder_core(text: str) -> tuple[datetime, str | None]:
-    now = datetime.now(timezone.utc)
+def _parse_reminder_core(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
+    """Public-facing core. Computes the parse in the user's tz, then
+    converts the resulting datetime to UTC so storage is timezone-naive
+    UTC ISO strings throughout the codebase.
+
+    When tz_name is None, uses UTC (legacy behavior, no semantic shift)."""
+    dt_local, recurrence = _parse_reminder_local(text, tz_name=tz_name)
+    if dt_local.tzinfo is None:
+        # Edge case: defaulted timestamps return naive UTC. Tag and pass through.
+        dt_utc = dt_local.replace(tzinfo=timezone.utc)
+    else:
+        dt_utc = dt_local.astimezone(timezone.utc)
+    return dt_utc, recurrence
+
+
+def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
+    """Internal: parses time tokens treating "9:00" / "сегодня в 9" / etc.
+    as wall-clock time in the user's tz. Returns a tz-aware datetime in
+    that zone."""
+    tz = get_zoneinfo(tz_name) if tz_name else timezone.utc
+    now = datetime.now(tz)
     lowered = text.lower().strip()
     recurrence = None
 
@@ -395,7 +434,8 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
         await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
         return
 
-    trigger_at, recurring = parse_reminder(text)
+    tz_name = _user_tz_name(user_id)
+    trigger_at, recurring = parse_reminder(text, tz_name=tz_name)
     time_str = _extract_time_string(text)
     content = text.replace(time_str, "").strip() if time_str else text
     content = re.sub(r"\s+", " ", content).strip(",. ")
@@ -412,12 +452,13 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
     )
 
     rec_label = f" ({recurring})" if recurring else ""
+    local_str = format_local(trigger_at, tz_name)
 
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=user_id,
         text=f"✅ Напоминание добавлено\n"
-             f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+             f"🕐 Сработает: {local_str}{rec_label}\n"
              f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
@@ -430,7 +471,8 @@ async def _process_task_from_text(user_id: int, text: str):
         await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
         return
 
-    trigger_at, recurring = parse_reminder(text)
+    tz_name = _user_tz_name(user_id)
+    trigger_at, recurring = parse_reminder(text, tz_name=tz_name)
     time_str = _extract_time_string(text)
     content = text.replace(time_str, "").strip() if time_str else text
     content = re.sub(r"\s+", " ", content).strip(",. ")
@@ -446,11 +488,12 @@ async def _process_task_from_text(user_id: int, text: str):
         action="execute",
     )
     rec_label = f" ({recurring})" if recurring else ""
+    local_str = format_local(trigger_at, tz_name)
     from bot.bot import bot as aiogram_bot
     await aiogram_bot.send_message(
         chat_id=user_id,
         text=f"✅ Задача добавлена\n"
-             f"🕐 Сработает: {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}\n"
+             f"🕐 Сработает: {local_str}{rec_label}\n"
              f"🤖 Режим: AI-выполнение\n"
              f"📝 Текст: {content}",
         reply_markup=command_keyboard,
