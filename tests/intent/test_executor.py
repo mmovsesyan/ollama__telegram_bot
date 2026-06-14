@@ -38,6 +38,38 @@ class TestIntentExecutor:
         assert context.message_text == "remind me"
         assert context.args.content == "test"
         assert context.intent_result is intent_result
+        assert context.db is None
+        assert context.state is None
+
+    @pytest.mark.asyncio
+    async def test_db_and_state_passed_to_tool_context(self):
+        intent_result = IntentResult(
+            intent="create_reminder",
+            tool="remind",
+            args=IntentArgs(content="test"),
+            confidence=0.95,
+        )
+        expected = ToolResult(text="done", success=True)
+
+        mock_tool = AsyncMock()
+        mock_tool.execute.return_value = expected
+        registry = MagicMock()
+        registry.get.return_value = mock_tool
+
+        fake_db = object()
+        fake_state = object()
+        executor = IntentExecutor(registry=registry)
+        await executor.execute(
+            user_id=1,
+            message_text="remind me",
+            intent_result=intent_result,
+            db=fake_db,
+            state=fake_state,
+        )
+
+        context = mock_tool.execute.call_args[0][0]
+        assert context.db is fake_db
+        assert context.state is fake_state
 
     @pytest.mark.asyncio
     async def test_low_confidence_routes_to_clarify(self):

@@ -54,6 +54,7 @@ async def main() -> None:
     # Inject db into routers and services
     completion.db = db
     cron.db = db
+    smart_handler.db = db
     from bot.services import reminders as reminders_service
     reminders_service.db = db
 

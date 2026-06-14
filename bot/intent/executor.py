@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 from bot.intent.schemas import IntentArgs, IntentResult, ToolContext, ToolResult
 from bot.intent.tools.chat import ChatTool
 from bot.intent.tools.registry import ToolRegistry
@@ -19,6 +20,8 @@ class IntentExecutor:
         user_id: int,
         message_text: str,
         intent_result: IntentResult,
+        db: Any | None = None,
+        state: Any | None = None,
     ) -> ToolResult:
         # If the LLM explicitly asked for clarification, short-circuit before validation.
         if intent_result.clarification_needed:
@@ -51,6 +54,8 @@ class IntentExecutor:
                     args=IntentArgs(),
                     confidence=1.0,
                 ),
+                db=db,
+                state=state,
             )
             return await self.chat_tool.execute(chat_context)
 
@@ -59,6 +64,8 @@ class IntentExecutor:
             message_text=message_text,
             args=intent_result.args,
             intent_result=intent_result,
+            db=db,
+            state=state,
         )
         try:
             return await tool.execute(context)

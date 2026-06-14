@@ -12,4 +12,6 @@ class RemindTool(BaseTool):
         if not content:
             return ToolResult(text="Не удалось определить текст напоминания", success=False)
         await _process_remind(user_id=context.user_id, text=content, action="notify")
-        return ToolResult(text="reminder_created", success=True)
+        # Service sends its own Telegram message; return empty text so the handler
+        # does not send a duplicate reply.
+        return ToolResult(text="", success=True)

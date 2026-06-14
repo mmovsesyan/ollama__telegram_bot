@@ -69,9 +69,75 @@ async def test_handler_calls_intent_pipeline_and_sends_answer():
         await smart_message_handler(message, state=None)
     mock_route.assert_awaited_once_with(user_id=42, message_text="remind me to test")
     mock_exec.assert_awaited_once_with(
-        user_id=42, message_text="remind me to test", intent_result=intent
+        user_id=42,
+        message_text="remind me to test",
+        intent_result=intent,
+        db=None,
+        state=None,
     )
     message.answer.assert_awaited_once_with("done", reply_markup=command_keyboard)
+
+
+@pytest.mark.asyncio
+async def test_handler_ignores_slash_commands():
+    message = _make_message("/help")
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock
+    ) as mock_route, patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock
+    ) as mock_exec:
+        await smart_message_handler(message, state=None)
+    mock_route.assert_not_awaited()
+    mock_exec.assert_not_awaited()
+    message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handler_ignores_reply_buttons():
+    message = _make_message("❓ Помощь")
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock
+    ) as mock_route, patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock
+    ) as mock_exec:
+        await smart_message_handler(message, state=None)
+    mock_route.assert_not_awaited()
+    mock_exec.assert_not_awaited()
+    message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handler_blocks_unauthorized_user():
+    message = _make_message("hello")
+    message.from_user = MagicMock(id=999)
+    with patch(
+        "bot.handlers.smart.is_allowed", return_value=False
+    ), patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock
+    ) as mock_route:
+        await smart_message_handler(message, state=None)
+    mock_route.assert_not_awaited()
+    message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handler_passes_db_attribute_to_executor():
+    message = _make_message("hello")
+    fake_db = object()
+    smart_message_handler.db = fake_db
+    intent = MagicMock()
+    result = MagicMock()
+    result.text = "done"
+    result.success = True
+    result.reply_markup = None
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock, return_value=intent
+    ), patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock, return_value=result
+    ) as mock_exec:
+        await smart_message_handler(message, state=None)
+    assert mock_exec.await_args.kwargs["db"] is fake_db
+    del smart_message_handler.db  # clean up module-level mutation
 
 
 @pytest.mark.asyncio

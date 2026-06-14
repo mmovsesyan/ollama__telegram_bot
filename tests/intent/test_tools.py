@@ -57,7 +57,7 @@ class TestRemindTool:
         with patch("bot.intent.tools.remind._process_remind") as mock_process:
             result = await tool.execute(ctx)
         assert result.success is True
-        assert result.text == "reminder_created"
+        assert result.text == ""
         mock_process.assert_awaited_once_with(user_id=1, text="позвонить", action="notify")
 
     @pytest.mark.asyncio
@@ -103,7 +103,7 @@ class TestTaskTool:
         with patch("bot.intent.tools.task._process_task_from_text") as mock_process:
             result = await tool.execute(ctx)
         assert result.success is True
-        assert result.text == "task_created"
+        assert result.text == ""
         mock_process.assert_awaited_once_with(user_id=1, text="погода в Москве")
 
     @pytest.mark.asyncio

@@ -12,4 +12,6 @@ class TaskTool(BaseTool):
         if not content:
             return ToolResult(text="Не удалось определить текст задачи", success=False)
         await _process_task_from_text(user_id=context.user_id, text=content)
-        return ToolResult(text="task_created", success=True)
+        # Service sends its own Telegram message; return empty text so the handler
+        # does not send a duplicate reply.
+        return ToolResult(text="", success=True)
