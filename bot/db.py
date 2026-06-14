@@ -1,6 +1,4 @@
 import sqlite3
-import json
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +13,11 @@ class Database:
             # Migrate reminders table: add action column if missing
             try:
                 conn.execute("ALTER TABLE reminders ADD COLUMN action TEXT DEFAULT 'notify'")
+            except sqlite3.OperationalError:
+                pass
+            # Migrate monitors table: persist alert state across restarts
+            try:
+                conn.execute("ALTER TABLE monitors ADD COLUMN alerted INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
             conn.executescript("""
@@ -259,6 +262,24 @@ class Database:
                 (last_status, monitor_id)
             )
             conn.commit()
+
+    def set_monitor_alerted(self, monitor_id: int, alerted: bool):
+        """Persist whether the monitor is currently in 'alert' state.
+
+        Survives restart so users don't get duplicate ALERTs and recovery
+        messages still fire after downtime."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE monitors SET alerted = ? WHERE id = ?",
+                (1 if alerted else 0, monitor_id),
+            )
+            conn.commit()
+
+    def is_monitor_alerted(self, monitor_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT alerted FROM monitors WHERE id = ?", (monitor_id,))
+            row = cursor.fetchone()
+            return bool(row[0]) if row and row[0] is not None else False
 
     def remove_monitor(self, monitor_id: int):
         with sqlite3.connect(self.db_path) as conn:

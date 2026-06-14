@@ -8,10 +8,12 @@ class RemindTool(BaseTool):
     required_args = ("content",)
 
     async def execute(self, context: ToolContext) -> ToolResult:
-        content = context.args.content or context.message_text
-        if not content:
+        # Always feed the FULL user text into _process_remind so its time-parser
+        # sees "через час позвонить" rather than just "позвонить" — the LLM's
+        # extracted args.content drops time tokens we still need.
+        text = (context.message_text or "").strip()
+        if not text:
             return ToolResult(text="Не удалось определить текст напоминания", success=False)
-        await _process_remind(user_id=context.user_id, text=content, action="notify")
-        # Service sends its own Telegram message; return empty text so the handler
-        # does not send a duplicate reply.
+        await _process_remind(user_id=context.user_id, text=text, action="notify")
         return ToolResult(text="", success=True)
+

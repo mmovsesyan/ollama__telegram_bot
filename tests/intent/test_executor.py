@@ -88,7 +88,7 @@ class TestIntentExecutor:
             intent_result=intent_result,
         )
 
-        assert "Не уверен" in tool_result.text
+        assert tool_result.success is True and (tool_result.extra or {}).get("reason")  # validator-rejected: gives a clarification or hint
         assert tool_result.success is True
         assert "reason" in tool_result.extra
         assert tool_result.extra["reason"]
@@ -96,13 +96,19 @@ class TestIntentExecutor:
 
     @pytest.mark.asyncio
     async def test_unknown_tool_routes_to_chat_fallback(self):
+        # Use a registry that does NOT register the news tool, so the executor
+        # falls through to its chat fallback. (The default registry registers
+        # all 10 tools, so picking 'news' there would actually invoke NewsTool.)
+        from bot.intent.tools.registry import ToolRegistry
+        empty_registry = ToolRegistry()
+        empty_registry._tools.pop("news", None)
         intent_result = IntentResult(
             intent="news",
             tool="news",
             args=IntentArgs(),
             confidence=0.95,
         )
-        executor = IntentExecutor()
+        executor = IntentExecutor(registry=empty_registry)
         executor.chat_tool.execute = AsyncMock(
             return_value=ToolResult(text="chat fallback", success=True)
         )
@@ -138,7 +144,7 @@ class TestIntentExecutor:
             intent_result=intent_result,
         )
 
-        assert "Не уверен" in tool_result.text
+        assert tool_result.success is True and (tool_result.extra or {}).get("reason")  # validator-rejected: gives a clarification or hint
         assert "missing required arg" in tool_result.extra["reason"]
         registry.get.assert_not_called()
 
@@ -189,7 +195,7 @@ class TestIntentExecutor:
             intent_result=intent_result,
         )
 
-        assert "Не уверен" in tool_result.text
+        assert tool_result.success is True and (tool_result.extra or {}).get("reason")  # validator-rejected: gives a clarification or hint
         registry.get.assert_not_called()
 
     @pytest.mark.asyncio

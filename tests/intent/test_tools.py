@@ -10,6 +10,10 @@ from bot.intent.tools.registry import ToolRegistry
 class TestChatTool:
     @pytest.mark.asyncio
     async def test_chat_tool_returns_text(self):
+        # ChatTool delegates to bot.routers.completion.generate when a Message
+        # is attached, and falls back to a non-streaming completion otherwise.
+        # Test the fallback path: no message attached, mock generate_chat_completion
+        # at its actual import site (bot.ollama).
         tool = ChatTool()
         ctx = ToolContext(
             user_id=1,
@@ -20,7 +24,7 @@ class TestChatTool:
         async def _fake_gen(*args, **kwargs):
             yield (False, type("C", (), {"message": type("M", (), {"content": "Hi there"})})())
 
-        with patch("bot.intent.tools.chat.generate_chat_completion", side_effect=_fake_gen) as mock_gen:
+        with patch("bot.ollama.generate_chat_completion", side_effect=_fake_gen):
             result = await tool.execute(ctx)
         assert result.success is True
         assert "Hi there" in result.text
@@ -46,7 +50,9 @@ class TestRegistry:
 
 class TestRemindTool:
     @pytest.mark.asyncio
-    async def test_remind_tool_calls_service_and_returns_success(self):
+    async def test_remind_tool_calls_service_with_full_message(self):
+        # Tool always passes the full user message, not args.content, so the
+        # downstream parser sees time tokens like "через 5 минут".
         tool = RemindTool()
         ctx = ToolContext(
             user_id=1,
@@ -58,10 +64,12 @@ class TestRemindTool:
             result = await tool.execute(ctx)
         assert result.success is True
         assert result.text == ""
-        mock_process.assert_awaited_once_with(user_id=1, text="позвонить", action="notify")
+        mock_process.assert_awaited_once_with(
+            user_id=1, text="напомни через 5 минут позвонить", action="notify"
+        )
 
     @pytest.mark.asyncio
-    async def test_remind_tool_falls_back_to_message_text(self):
+    async def test_remind_tool_uses_message_text_when_args_empty(self):
         tool = RemindTool()
         ctx = ToolContext(
             user_id=2,
@@ -72,10 +80,12 @@ class TestRemindTool:
         with patch("bot.intent.tools.remind._process_remind") as mock_process:
             result = await tool.execute(ctx)
         assert result.success is True
-        mock_process.assert_awaited_once_with(user_id=2, text="напомни завтра в 9:00 отчёт", action="notify")
+        mock_process.assert_awaited_once_with(
+            user_id=2, text="напомни завтра в 9:00 отчёт", action="notify"
+        )
 
     @pytest.mark.asyncio
-    async def test_remind_tool_returns_failure_when_content_missing(self):
+    async def test_remind_tool_returns_failure_when_message_empty(self):
         tool = RemindTool()
         ctx = ToolContext(
             user_id=1,
@@ -92,7 +102,7 @@ class TestRemindTool:
 
 class TestTaskTool:
     @pytest.mark.asyncio
-    async def test_task_tool_calls_service_and_returns_success(self):
+    async def test_task_tool_calls_service_with_full_message(self):
         tool = TaskTool()
         ctx = ToolContext(
             user_id=1,
@@ -104,10 +114,12 @@ class TestTaskTool:
             result = await tool.execute(ctx)
         assert result.success is True
         assert result.text == ""
-        mock_process.assert_awaited_once_with(user_id=1, text="погода в Москве")
+        mock_process.assert_awaited_once_with(
+            user_id=1, text="задача через час погода в Москве"
+        )
 
     @pytest.mark.asyncio
-    async def test_task_tool_returns_failure_when_content_missing(self):
+    async def test_task_tool_returns_failure_when_message_empty(self):
         tool = TaskTool()
         ctx = ToolContext(
             user_id=1,

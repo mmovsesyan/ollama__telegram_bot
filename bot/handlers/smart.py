@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 router = Router()
 _default_executor = IntentExecutor()
 
+# Injected from bot.__init__ at startup; tools that need DB access read this.
+db = None
+
 # Texts that are handled by reply-button or explicit-command routers should not
 # be processed by the free-form smart pipeline.
 _BUTTON_COMMANDS = {
@@ -62,8 +65,9 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
             user_id=user_id,
             message_text=text,
             intent_result=intent_result,
-            db=getattr(smart_message_handler, "db", None),
+            db=db,
             state=state,
+            message=message,
         )
     except Exception:
         logger.exception("Smart handler failed for user_id=%s", user_id)
@@ -73,9 +77,35 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         )
         return
 
-    # Tools that send their own Telegram messages return an empty text.
+    # Tools that send their own Telegram messages return an empty text
+    # (e.g. RemindTool, TaskTool — _process_remind/_process_task_from_text
+    # already replied via aiogram_bot.send_message).
     if not result.text and result.success:
+        _persist_exchange(user_id, text, "")
         return
 
     markup = result.reply_markup if result.reply_markup is not None else command_keyboard
     await message.answer(result.text, reply_markup=markup)
+    _persist_exchange(user_id, text, result.text)
+
+
+def _persist_exchange(user_id: int, user_text: str, assistant_text: str) -> None:
+    """Save a smart-pipeline exchange to the messages table so the LLM has
+    context across tool calls. Without this, free-form chats forget the user
+    just asked for weather / set a reminder / saved a note.
+    """
+    if db is None:
+        return
+    try:
+        from bot.routers import completion
+        # Reuse completion's session machinery so chat and tool calls share
+        # one session per user. _create_chat is idempotent and bootstraps.
+        completion._create_chat(user_id)
+        chat = completion.chats.get(user_id)
+        if chat and chat.session_id:
+            db.save_message(user_id, chat.session_id, "user", user_text, chat.selected_model)
+            if assistant_text:
+                db.save_message(user_id, chat.session_id, "assistant", assistant_text, chat.selected_model)
+    except Exception:
+        logger.exception("Failed to persist smart-pipeline exchange for user_id=%s", user_id)
+

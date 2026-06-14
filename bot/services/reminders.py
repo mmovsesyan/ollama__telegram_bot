@@ -182,10 +182,41 @@ def parse_time(text: str) -> datetime:
     return dt
 
 
+# Sentinel datetime that means "no time tokens were recognized in the input,
+# falling back to default". Compare returned dt against this to detect failures.
+_PARSE_FALLBACK_DELTA = timedelta(minutes=5)
+
+
+def parse_reminder_strict(text: str) -> tuple[datetime, str | None, bool]:
+    """Like parse_reminder, but the third element is True when the input
+    contained recognizable time tokens, False when the default fallback
+    (now + 5 minutes) was used."""
+    before = datetime.now(timezone.utc)
+    dt, recurrence = _parse_reminder_core(text)
+    after = datetime.now(timezone.utc)
+
+    # Heuristic: if there's no recurrence AND the result is very close to the
+    # fallback (now + 5min) AND the input had no obvious time tokens, treat as
+    # not-parsed.
+    fallback_lo = before + _PARSE_FALLBACK_DELTA - timedelta(seconds=2)
+    fallback_hi = after + _PARSE_FALLBACK_DELTA + timedelta(seconds=2)
+    looks_like_fallback = recurrence is None and fallback_lo <= dt <= fallback_hi
+    has_time_tokens = bool(_extract_time_string(text))
+    parsed = not looks_like_fallback or has_time_tokens
+    return dt, recurrence, parsed
+
+
 def parse_reminder(text: str) -> tuple[datetime, str | None]:
     """Parse reminder time. Returns (datetime, recurrence_pattern).
     recurrence_pattern: daily, weekday, weekend, weekly, monthly,
-                        monday..sunday, or None."""
+                        monday..sunday, or None.
+
+    On unrecognized input, returns (now + 5 minutes, None) as a sane default.
+    Use `parse_reminder_strict` to know whether the default was used."""
+    return _parse_reminder_core(text)
+
+
+def _parse_reminder_core(text: str) -> tuple[datetime, str | None]:
     now = datetime.now(timezone.utc)
     lowered = text.lower().strip()
     recurrence = None
@@ -259,27 +290,41 @@ def parse_reminder(text: str) -> tuple[datetime, str | None]:
         return now + timedelta(minutes=num), None
 
     # --- Day-of-week patterns -------------------------------------------
-    weekday_map = {
-        "понедельник": "monday", "monday": "monday",
-        "вторник": "tuesday", "tuesday": "tuesday",
-        "среда": "wednesday", "wednesday": "wednesday",
-        "четверг": "thursday", "thursday": "thursday",
-        "пятница": "friday", "friday": "friday",
-        "суббота": "saturday", "saturday": "saturday",
-        "воскресенье": "sunday", "sunday": "sunday",
-    }
-    for day_word, day_key in weekday_map.items():
-        if day_word in lowered:
-            recurrence = day_key
-            target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            target_weekday = target.weekday()
-            day_num = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}[day_key]
-            if target_weekday != day_num or target <= now:
-                days_ahead = (day_num - target_weekday) % 7
-                if days_ahead == 0:
-                    days_ahead = 7
-                target += timedelta(days=days_ahead)
-            return target, recurrence
+    # Match the stem with optional inflection ("понедельник", "понедельника",
+    # "вторник", "вторнику", "среду", "среда" → all hit one stem). Word
+    # boundaries prevent false hits like "среды" matching inside "сегодняшний".
+    weekday_stems = [
+        (r"понедельник", "monday"),
+        (r"вторник", "tuesday"),
+        (r"сред[уаыею]", "wednesday"),
+        (r"четверг", "thursday"),
+        (r"пятниц[уаыею]", "friday"),
+        (r"суббот[уаыею]", "saturday"),
+        (r"воскресень[еяю]", "sunday"),
+        (r"monday", "monday"),
+        (r"tuesday", "tuesday"),
+        (r"wednesday", "wednesday"),
+        (r"thursday", "thursday"),
+        (r"friday", "friday"),
+        (r"saturday", "saturday"),
+        (r"sunday", "sunday"),
+    ]
+    matched_day_key = None
+    for pattern, day_key in weekday_stems:
+        if re.search(rf"\b{pattern}\b", lowered, re.IGNORECASE):
+            matched_day_key = day_key
+            break
+    if matched_day_key:
+        recurrence = matched_day_key
+        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        target_weekday = target.weekday()
+        day_num = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}[matched_day_key]
+        if target_weekday != day_num or target <= now:
+            days_ahead = (day_num - target_weekday) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            target += timedelta(days=days_ahead)
+        return target, recurrence
 
     # --- Relative offsets -----------------------------------------------
     # через неделю / через месяц (no digit)

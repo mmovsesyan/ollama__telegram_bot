@@ -1,10 +1,11 @@
 from bot.ollama.api import validate_installation_with_configuration
 from bot.settings import OLLAMA_MODEL, DB_PATH
-from bot.ollama import generate_chat_completion, OllamaChat, OllamaChatMessage
+from bot.ollama import generate_chat_completion, OllamaChatMessage
 from bot.ollama.dto import OllamaErrorChunk
 from bot.tasks_exec import execute_smart
 from bot.db import Database
 
+import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
@@ -51,7 +52,9 @@ async def main() -> None:
     # Init database
     db = Database(DB_PATH)
 
-    # Inject db into routers and services
+    # Inject db into routers and services BEFORE wiring them up. If we
+    # registered the routers first, an early Telegram update could land
+    # while db is still None and crash with AttributeError.
     completion.db = db
     cron.db = db
     smart_handler.db = db
@@ -87,6 +90,8 @@ async def main() -> None:
             return nxt.isoformat()
         if recurring == "weekly":
             return (dt + timedelta(weeks=1)).isoformat()
+        if recurring == "monthly":
+            return (dt + timedelta(days=30)).isoformat()
         if recurring in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"):
             weekday_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
             target = weekday_map[recurring]
@@ -99,11 +104,19 @@ async def main() -> None:
     async def check_reminders():
         now = datetime.now(timezone.utc).isoformat()
         reminders = db.get_pending_reminders(now)
+        # Telegram rate-limits at ~30 msg/sec; if many reminders fire in one
+        # tick (especially after downtime), space them out so we don't
+        # silently drop the tail under HTTP 429.
+        SEND_DELAY = 0.05  # ~20 messages/second, safe headroom
+        sent_count = 0
         for r in reminders:
             try:
                 action = r.get('action', 'notify')
                 user_id = r['user_id']
                 content = r['content']
+
+                if sent_count > 0:
+                    await asyncio.sleep(SEND_DELAY)
 
                 if action == 'execute':
                     # Try smart execution (real APIs) first
@@ -145,19 +158,13 @@ async def main() -> None:
                     db.reschedule_reminder(r['id'], nxt)
                 else:
                     db.disable_reminder(r['id'])
+                sent_count += 1
             except Exception as e:
                 print(f"[CRON] Failed to send reminder {r['id']}: {e}")
-
-    _monitor_alerted: dict[int, bool] = {}
 
     async def check_monitors():
         now = datetime.now(timezone.utc)
         monitors = db.get_all_active_monitors()
-        active_ids = {m['id'] for m in monitors}
-        # Clean up orphaned alerts for removed monitors
-        for mid in list(_monitor_alerted.keys()):
-            if mid not in active_ids:
-                del _monitor_alerted[mid]
 
         async with aiohttp.ClientSession() as session:
             for m in monitors:
@@ -172,6 +179,7 @@ async def main() -> None:
                         pass
                 expected = m.get('expected_status', 200)
                 mid = m['id']
+                was_alerted = bool(m.get('alerted'))
                 try:
                     async with session.request(
                         method=m.get('method', 'GET'),
@@ -181,8 +189,8 @@ async def main() -> None:
                         status = response.status
                         db.update_monitor_status(mid, status)
                         if status != expected:
-                            if not _monitor_alerted.get(mid):
-                                _monitor_alerted[mid] = True
+                            if not was_alerted:
+                                db.set_monitor_alerted(mid, True)
                                 try:
                                     await aiogram_bot.send_message(
                                         chat_id=m['user_id'],
@@ -193,7 +201,8 @@ async def main() -> None:
                                 except Exception as send_err:
                                     print(f"[CRON] Failed alert: {send_err}")
                         else:
-                            if _monitor_alerted.pop(mid, None):
+                            if was_alerted:
+                                db.set_monitor_alerted(mid, False)
                                 try:
                                     await aiogram_bot.send_message(
                                         chat_id=m['user_id'],
@@ -205,8 +214,8 @@ async def main() -> None:
                                     print(f"[CRON] Failed recovery: {send_err}")
                 except Exception as e:
                     db.update_monitor_status(mid, 0)
-                    if not _monitor_alerted.get(mid):
-                        _monitor_alerted[mid] = True
+                    if not was_alerted:
+                        db.set_monitor_alerted(mid, True)
                         try:
                             await aiogram_bot.send_message(
                                 chat_id=m['user_id'],

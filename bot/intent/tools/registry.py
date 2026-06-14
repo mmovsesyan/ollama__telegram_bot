@@ -1,7 +1,10 @@
 from bot.intent.tools.base import BaseTool
 from bot.intent.tools.chat import ChatTool
+from bot.intent.tools.persistence import MemoryTool, MonitorTool, NoteTool, PlanTool
 from bot.intent.tools.remind import RemindTool
+from bot.intent.tools.search import NewsTool, SearchTool
 from bot.intent.tools.task import TaskTool
+from bot.intent.tools.weather import WeatherTool
 
 
 class ToolRegistry:
@@ -10,6 +13,13 @@ class ToolRegistry:
             ChatTool.name: ChatTool(),
             RemindTool.name: RemindTool(),
             TaskTool.name: TaskTool(),
+            WeatherTool.name: WeatherTool(),
+            SearchTool.name: SearchTool(),
+            NewsTool.name: NewsTool(),
+            NoteTool.name: NoteTool(),
+            MemoryTool.name: MemoryTool(),
+            MonitorTool.name: MonitorTool(),
+            PlanTool.name: PlanTool(),
         }
 
     @property

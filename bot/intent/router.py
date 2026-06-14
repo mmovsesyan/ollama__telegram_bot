@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import typing
@@ -147,15 +148,19 @@ class LLMIntentRouter:
 
         raw_response = ""
         try:
-            async for is_done, chunk in generate_chat_completion(
-                messages, OLLAMA_MODEL, temperature=0
-            ):
-                if is_done:
-                    continue
-                if isinstance(chunk, OllamaErrorChunk):
-                    logger.warning(f"LLM error while routing intent: {chunk.error}")
-                    return cls._fallback(message_text)
-                raw_response += getattr(chunk.message, "content", "") or ""
+            async with asyncio.timeout(15):
+                async for is_done, chunk in generate_chat_completion(
+                    messages, OLLAMA_MODEL, temperature=0
+                ):
+                    if is_done:
+                        continue
+                    if isinstance(chunk, OllamaErrorChunk):
+                        logger.warning(f"LLM error while routing intent: {chunk.error}")
+                        return cls._fallback(message_text)
+                    raw_response += getattr(chunk.message, "content", "") or ""
+        except asyncio.TimeoutError:
+            logger.warning("Intent routing timed out after 15s")
+            return cls._fallback(message_text)
         except Exception as e:
             logger.warning(f"Intent routing generation failed: {e}")
             return cls._fallback(message_text)

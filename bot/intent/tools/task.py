@@ -8,10 +8,10 @@ class TaskTool(BaseTool):
     required_args = ("content",)
 
     async def execute(self, context: ToolContext) -> ToolResult:
-        content = context.args.content or context.message_text
-        if not content:
+        # Use full message_text so time tokens survive the LLM's content extraction.
+        text = (context.message_text or "").strip()
+        if not text:
             return ToolResult(text="Не удалось определить текст задачи", success=False)
-        await _process_task_from_text(user_id=context.user_id, text=content)
-        # Service sends its own Telegram message; return empty text so the handler
-        # does not send a duplicate reply.
+        await _process_task_from_text(user_id=context.user_id, text=text)
         return ToolResult(text="", success=True)
+

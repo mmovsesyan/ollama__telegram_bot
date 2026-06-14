@@ -1,13 +1,14 @@
 from aiogram import F, Router
 from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 from pydantic import BaseModel
 from typing import Any
 import asyncio
 import json
 import os
 import tempfile
+import time
 
 from bot.bot import bot as aiogram_bot
 from bot.keyboards.inline import answer_keyboard
@@ -15,9 +16,9 @@ from bot.keyboards.reply import command_keyboard, cancel_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
+from bot.security import is_allowed as _is_allowed
 from bot.states import BotStates
 from bot.settings import (
-    ALLOWED_CHAT_IDS,
     COMPACTION_EVERY_N,
     MAX_CONTEXT_MESSAGES,
     OLLAMA_MODEL,
@@ -57,13 +58,6 @@ def _get_whisper_model() -> Any:
     return _whisper_model_instance
 
 
-def _is_allowed(user_id: int) -> bool:
-    if not ALLOWED_CHAT_IDS:
-        return True
-    allowed = {int(x.strip()) for x in ALLOWED_CHAT_IDS.split(",") if x.strip().isdigit()}
-    return user_id in allowed
-
-
 def _escape_markdown(text: str) -> str:
     chars = r"_[]()~`>#+-=|{}.!"
     for ch in chars:
@@ -72,7 +66,30 @@ def _escape_markdown(text: str) -> str:
 
 
 def wrap(s: str, w: int) -> list[str]:
-    return [s[i : i + w] for i in range(0, len(s), w)]
+    """Split a string into chunks of at most `w` characters, breaking on word
+    boundaries when possible so emoji and grapheme clusters don't get cut.
+
+    Falls back to hard chunking only if a single word exceeds `w` chars.
+    """
+    if not s:
+        return []
+    if len(s) <= w:
+        return [s]
+    out = []
+    rem = s
+    while len(rem) > w:
+        # Look for the last whitespace within the window
+        cut = rem.rfind(" ", 0, w)
+        if cut <= 0:
+            cut = rem.rfind("\n", 0, w)
+        if cut <= 0:
+            # No word boundary in range; hard-cut to avoid infinite loop
+            cut = w
+        out.append(rem[:cut].rstrip())
+        rem = rem[cut:].lstrip()
+    if rem:
+        out.append(rem)
+    return out
 
 
 class UserChat(BaseModel):
@@ -88,8 +105,6 @@ chats: dict[int, UserChat] = {}
 _typing_last: dict[int, float] = {}
 _request_last: dict[int, float] = {}
 _generating: set[int] = set()
-
-import time
 
 
 async def _cleanup_old_chats():
@@ -786,7 +801,13 @@ async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: s
         return
 
     await status_msg.edit_text(f"🎤 Распознано: {text}")
-    await answer(message, state, override_text=text)
+    # Treat the transcribed text as if the user typed it. Routing into the
+    # smart-handler pipeline keeps voice and text on the same path.
+    from bot.handlers.smart import smart_message_handler
+    from copy import copy
+    voice_msg = copy(message)
+    voice_msg.text = text
+    await smart_message_handler(voice_msg, state=state)
 
 
 @router.message(F.voice)
@@ -805,236 +826,6 @@ async def handle_audio(message: Message, state: FSMContext):
     suffix = ".mp3" if (audio.file_name or "").lower().endswith(".mp3") else ".audio"
     await _handle_voice_or_audio(message, state, audio.file_id, suffix, "аудио")
 
-
-def _detect_intent(text: str) -> tuple[str | None, str | None]:
-    import re
-    t = text.lower().strip()
-
-    if re.search(r"напомни|напомнить|добавь напоминание|добавить напоминание|напомни мне", t):
-        return "remind", text
-
-    if re.search(r"^\s*задача\b|добавь задачу|создай задачу|запланируй задачу", t):
-        return "task", re.sub(r"^\s*задача\b", "", text, flags=re.IGNORECASE).strip()
-
-    m = re.search(r"(?:погода|погоду|weather|температура)(?:\s+(?:в|for|in|для))?\s+([a-zа-яё\-]+)", t)
-    if m:
-        return "weather", m.group(1).capitalize()
-    if re.search(r"^погода$|^погоду$|^weather$", t):
-        return "weather", None
-
-    m = re.search(r"(?:поищи|найди|загугли|погугли|ищи|search|google)\s+(.+)", t)
-    if m:
-        return "search", m.group(1).strip()
-
-    if re.search(r"новости|последние новости|news", t):
-        return "news", None
-
-    if re.search(r"^\s*заметка\b|сделай заметку|добавь заметку|запиши заметку", t):
-        return "note", re.sub(r"^\s*заметка\b", "", text, flags=re.IGNORECASE).strip()
-
-    if re.search(r"запомни|добавь факт|запиши что|запомни что|факт:", t):
-        return "memory_add", re.sub(r"^\s*(?:запомни|добавь факт|запиши что|запомни что|факт:)\s*", "", text, flags=re.IGNORECASE).strip()
-
-    if re.search(r"моя память|что ты помнишь|покажи память|мои факты|покажи факты", t):
-        return "memory_show", None
-
-    if re.search(r"(?:добавь монитор|монитор|следи за)\s+(.+)", t):
-        return "monitor_add", m.group(1).strip() if (m := re.search(r"(?:добавь монитор|монитор|следи за)\s+(.+)", t)) else ""
-
-    if re.search(r"мониторы|покажи мониторы|список мониторов", t):
-        return "monitor_show", None
-
-    if re.search(r"отч[её]т|report|ежедневный отч[её]т", t):
-        return "report", None
-
-    if re.search(r"помощь|help|справка|команды", t):
-        return "help", None
-
-    if re.search(r"модели|список моделей|models", t):
-        return "models", None
-
-    m = re.search(r"(?:смени модель|поменяй модель|выбери модель)\s+(.+)", t)
-    if m:
-        return "model", m.group(1).strip()
-
-    if re.search(r"очисти|сбрось|clear chat|очистить историю", t):
-        return "clear", None
-
-    return None, None
-
-
-async def answer(message: Message, state: FSMContext, override_text: str | None = None) -> None:
-    if message.from_user is None:
-        return
-    user_id = message.from_user.id
-    if not _is_allowed(user_id):
-        print(f"[BLOCKED] Unauthorized user {user_id}")
-        return
-    text = override_text if override_text is not None else message.text
-    if text is None:
-        await message.answer("Я работаю только с текстом. Напиши сообщение или используй кнопки.", reply_markup=command_keyboard)
-        return
-
-    if text == "❌ Отмена":
-        current_state = await state.get_state()
-        if current_state is not None:
-            await state.clear()
-            await message.answer("Действие отменено.", reply_markup=command_keyboard)
-        else:
-            await message.answer("Нет активного действия для отмены.", reply_markup=command_keyboard)
-        return
-
-    if text in BUTTON_MAP:
-        mapped = BUTTON_MAP[text]
-        if mapped is None:
-            await message.answer(
-                "💬 Просто напиши или скажи голосом, что нужно.",
-                reply_markup=command_keyboard,
-            )
-            return
-        from copy import copy
-        mapped_msg = copy(message)
-        mapped_msg.text = mapped
-        # Dispatch via router chain: cron handlers have priority, so we just re-process.
-        # Simpler: forward to aiogram dispatcher's message handlers by manually invoking cron flow.
-        if mapped == "/weather":
-            await message.answer("🌤 Введи название города:", reply_markup=cancel_keyboard)
-            await state.set_state(BotStates.waiting_weather)
-        elif mapped == "/search":
-            await message.answer("🔍 Введи поисковый запрос:", reply_markup=cancel_keyboard)
-            await state.set_state(BotStates.waiting_search)
-        elif mapped == "/remind":
-            await message.answer("⏰ Чего напомнить?", reply_markup=cancel_keyboard)
-            await state.set_state(BotStates.waiting_remind)
-        elif mapped == "/task":
-            await message.answer(
-                "📋 Какую задачу выполнить? Я сам выполню её в указанное время.",
-                reply_markup=cancel_keyboard,
-            )
-            await state.set_state(BotStates.waiting_task_text)
-        elif mapped == "/note":
-            await message.answer("📝 Что записать?", reply_markup=cancel_keyboard)
-            await state.set_state(BotStates.waiting_note)
-        elif mapped == "/memory":
-            from bot.routers.cron import cmd_memory
-            await cmd_memory(message)
-        elif mapped == "/report":
-            from bot.routers.cron import cmd_report
-            await cmd_report(message)
-        elif mapped == "/help":
-            await cmd_help(message)
-        elif mapped == "/clear":
-            await cmd_clear(message)
-        return
-
-    try:
-        intent, arg = _detect_intent(text)
-        if intent and not text.startswith("/"):
-            if intent == "weather":
-                if arg:
-                    from bot.routers.cron import _process_weather
-                    await _process_weather(message, arg)
-                else:
-                    await message.answer("🌤 Какой город?", reply_markup=cancel_keyboard)
-                    await state.set_state(BotStates.waiting_weather)
-                return
-            if intent == "search":
-                if arg:
-                    from bot.routers.cron import _process_search
-                    await _process_search(message, arg)
-                else:
-                    await message.answer("🔍 Что искать?", reply_markup=cancel_keyboard)
-                    await state.set_state(BotStates.waiting_search)
-                return
-            if intent == "news":
-                from bot.routers.cron import cmd_news
-                await cmd_news(message)
-                return
-            if intent == "remind":
-                from bot.routers.cron import _process_remind
-                await _process_remind(user_id, text)
-                return
-            if intent == "task":
-                from bot.routers.cron import _process_task_from_text
-                await _process_task_from_text(user_id, arg or text)
-                return
-            if intent == "memory_show":
-                from bot.routers.cron import cmd_memory
-                await cmd_memory(message)
-                return
-            if intent == "monitor_show":
-                from bot.routers.cron import cmd_monitors
-                await cmd_monitors(message)
-                return
-            if intent == "report":
-                from bot.routers.cron import cmd_report
-                await cmd_report(message)
-                return
-            if intent == "note":
-                if arg and db:
-                    db.add_note(user_id, arg)
-                    await message.answer(
-                        f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {arg}",
-                        reply_markup=command_keyboard,
-                    )
-                else:
-                    await message.answer("📝 Что записать?", reply_markup=cancel_keyboard)
-                    await state.set_state(BotStates.waiting_note)
-                return
-            if intent == "memory_add":
-                if arg and db:
-                    from bot.routers.cron import _classify_memory
-                    category = await _classify_memory(arg)
-                    mid = db.add_memory(user_id, category, arg)
-                    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
-                    await message.answer(
-                        f"✅ Сохранено: {cat_names.get(category, category)}\n#{mid} | {arg}",
-                        reply_markup=command_keyboard,
-                    )
-                else:
-                    await message.answer(
-                        "🧠 Что запомнить? Я определю категорию автоматически.",
-                        reply_markup=cancel_keyboard,
-                    )
-                    await state.set_state(BotStates.waiting_memory_add)
-                    await state.update_data(memory_category="auto")
-                return
-            if intent == "monitor_add":
-                await message.answer(
-                    "🔍 Введи данные монитора:\n<имя> <url> [интервал]\nПример: Google google.com 5m",
-                    reply_markup=cancel_keyboard,
-                )
-                await state.set_state(BotStates.waiting_monitor_name)
-                return
-            if intent == "models":
-                await cmd_models(message)
-                return
-            if intent == "model":
-                if arg:
-                    from copy import copy
-                    model_msg = copy(message)
-                    model_msg.text = f"/model {arg}"
-                    await cmd_model(model_msg, state)
-                else:
-                    await message.answer("Укажи модель. Пример: llama3", reply_markup=cancel_keyboard)
-                    await state.set_state(BotStates.waiting_model)
-                return
-            if intent == "clear":
-                await cmd_clear(message)
-                return
-            if intent == "help":
-                await cmd_help(message)
-                return
-
-    except Exception as e:
-        print(f"[INTENT ERROR] {e}")
-
-    await generate(message, user_id, text)
-
-
-@router.message(F.text)
-async def handle_text(message: Message, state: FSMContext):
-    await answer(message, state)
 
 
 @router.errors()

@@ -8,7 +8,6 @@ Supports:
 """
 
 import time
-import json
 from json import loads
 from logging import getLogger
 from typing import Any, AsyncGenerator, Optional

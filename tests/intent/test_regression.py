@@ -344,7 +344,7 @@ class TestIntentRegression:
             return_value=_FakeAsyncIterator(
                 [(False, _make_chunk(json_response)), (True, None)]
             ),
-        ) as mock_gen:
+        ):
             result = await LLMIntentRouter.route(user_id=1, message_text=text)
 
         assert result.intent == expected_intent

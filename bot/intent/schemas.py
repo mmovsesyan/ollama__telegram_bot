@@ -62,6 +62,7 @@ class ToolContext(BaseModel):
     intent_result: IntentResult
     db: Any | None = None
     state: Any | None = None
+    message: Any | None = None  # aiogram Message, used by tools that stream replies
     model_config = {"arbitrary_types_allowed": True}
 
 

@@ -1,29 +1,28 @@
-from aiogram import Router, F
-from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
-import re
+import html
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.states import BotStates
-from bot.keyboards.reply import command_keyboard, cancel_keyboard, fsm_keyboard
 from bot.keyboards.inline import (
-    confirm_keyboard,
-    memory_category_keyboard,
     memory_menu_keyboard,
-    recurring_suggest_keyboard,
+    monitor_interval_keyboard,
+    note_quick_keyboard,
     reminder_quick_keyboard,
     task_quick_keyboard,
-    note_quick_keyboard,
-    monitor_interval_keyboard,
 )
-from bot.settings import ALLOWED_CHAT_IDS, OLLAMA_MODEL, SYSTEM_MESSAGE
-from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
+from bot.keyboards.reply import cancel_keyboard, command_keyboard
+from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
-from bot.tasks_exec import execute_smart
+from bot.security import is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
+from bot.services.weather import get_weather
+from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
+from bot.states import BotStates
 
 router = Router()
 
@@ -76,14 +75,6 @@ async def _fsm_guard(message: Message, state: FSMContext) -> bool:
     return False
 
 
-def _is_allowed(user_id: int) -> bool:
-    if not ALLOWED_CHAT_IDS:
-        return True
-    allowed = {int(x.strip()) for x in ALLOWED_CHAT_IDS.split(",") if x.strip().isdigit()}
-    return user_id in allowed
-
-
-# --- Monitor helpers ---
 def _parse_interval(text: str) -> int:
     """Parse interval: 5m, 10m, 1h, 2h, or raw seconds. Default 300 (5 min)."""
     text = text.strip().lower()
@@ -126,7 +117,6 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-import html
 
 
 def _clean_snippet(text: str, max_len: int = 200) -> str:
@@ -268,7 +258,12 @@ async def send_alert(user_id: int, text: str):
 
 
 async def _classify_memory(content: str) -> str:
-    """Use Ollama to pick the best memory category for content."""
+    """Use Ollama to pick the best memory category for content.
+
+    Falls back to 'note' on timeout, error, or unparseable response so the
+    user is never blocked for more than ~10 seconds on classification.
+    """
+    import asyncio
     prompt = (
         "Ты классифицируешь заметки пользователя. Выбери одну категорию:\n"
         "- fact: факт о пользователе, проекте или мире\n"
@@ -284,12 +279,16 @@ async def _classify_memory(content: str) -> str:
     ]
     result = ""
     try:
-        async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.2):
-            if is_done:
-                break
-            if isinstance(chunk, OllamaErrorChunk):
-                break
-            result += chunk.message.content
+        async with asyncio.timeout(10):
+            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.2):
+                if is_done:
+                    break
+                if isinstance(chunk, OllamaErrorChunk):
+                    break
+                result += chunk.message.content
+    except asyncio.TimeoutError:
+        print("[AUTO MEMORY] Classification timed out — defaulting to 'note'")
+        return "note"
     except Exception as e:
         print(f"[AUTO MEMORY] Classification failed: {e}")
     result = result.strip().lower()
@@ -447,7 +446,13 @@ async def process_remind_time(message: Message, state: FSMContext):
         await state.clear()
         return
     time_text = message.text.strip()
-    trigger_at, recurring = reminders_service.parse_reminder(time_text)
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_text)
+    if not parsed:
+        await message.answer(
+            "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
+            reply_markup=cancel_keyboard,
+        )
+        return
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         await state.clear()
@@ -628,7 +633,13 @@ async def process_task_time_manual(message: Message, state: FSMContext):
     data = await state.get_data()
     content = data.get("task_content", "")
     time_str = message.text.strip()
-    trigger_at, recurring = reminders_service.parse_reminder(time_str)
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_str)
+    if not parsed:
+        await message.answer(
+            "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
+            reply_markup=cancel_keyboard,
+        )
+        return
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         await state.clear()
@@ -821,6 +832,10 @@ async def process_note(message: Message, state: FSMContext):
         await state.clear()
         return
     if await _fsm_guard(message, state):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
         return
     db.add_note(message.from_user.id, message.text)
     await message.answer(
@@ -1415,7 +1430,7 @@ async def cb_del_reminder(callback: CallbackQuery):
         except Exception:
             pass
         await callback.message.edit_text(f"✅ Напоминание #{rid} удалено.")
-    except Exception as e:
+    except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
 
 
@@ -1442,7 +1457,7 @@ async def cb_del_monitor(callback: CallbackQuery):
         except Exception:
             pass
         await callback.message.edit_text(f"✅ Монитор #{mid} удалён.")
-    except Exception as e:
+    except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
 
 
@@ -1469,7 +1484,7 @@ async def cb_del_memory(callback: CallbackQuery):
         except Exception:
             pass
         await callback.message.edit_text(f"✅ Запись #{mid} удалена.")
-    except Exception as e:
+    except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
 
 
@@ -1591,131 +1606,6 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext):
 
 
 # --- Weather ---
-
-def _weather_emoji(desc: str) -> str:
-    d = desc.lower()
-    if "thunder" in d or "storm" in d:
-        return "⛈️"
-    if "snow" in d or "sleet" in d or "blizzard" in d or "ice" in d:
-        return "❄️"
-    if "rain" in d or "drizzle" in d or "shower" in d:
-        return "🌧️"
-    if "clear" in d or "sunny" in d:
-        return "☀️"
-    if "partly" in d:
-        return "⛅"
-    if "cloud" in d or "overcast" in d:
-        return "☁️"
-    if "fog" in d or "mist" in d or "haze" in d:
-        return "🌫️"
-    if "wind" in d or "breeze" in d:
-        return "💨"
-    return "🌡️"
-
-
-async def _get_wttr(city: str):
-    async with aiohttp.ClientSession() as session:
-        url = f"https://wttr.in/{city}?format=j1"
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                return None, f"HTTP {resp.status}"
-            text = await resp.text()
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError:
-                return None, f"Invalid JSON from wttr.in: {text[:200]}"
-            current = data.get("current_condition", [{}])[0]
-            area = data.get("nearest_area", [{}])[0]
-            area_name = area.get("areaName", [{}])[0].get("value", city)
-            country = area.get("country", [{}])[0].get("value", "")
-            desc = current.get("weatherDesc", [{}])[0].get("value", "")
-            emoji = _weather_emoji(desc)
-            temp = current.get("temp_C", "?")
-            feels = current.get("FeelsLikeC", "?")
-            wind = current.get("windspeedKmph", "?")
-            wind_dir = current.get("winddir16Point", "")
-            humidity = current.get("humidity", "?")
-            pressure = current.get("pressure", "?")
-            visibility = current.get("visibility", "?")
-            text = (
-                f"{emoji} Погода в {area_name}" + (f", {country}\n" if country else "\n")
-                + (f"{emoji} {desc}\n" if desc else "")
-                + f"🌡 Температура: {temp}°C (ощущается {feels}°C)\n"
-                f"💨 Ветер: {wind} km/h {wind_dir}\n"
-                f"💧 Влажность: {humidity}%\n"
-                f"📊 Давление: {pressure} мм рт. ст.\n"
-                f"👁 Видимость: {visibility} км\n\n"
-                f"Источник: wttr.in"
-            )
-            return text, None
-
-
-async def _get_open_meteo(city: str):
-    async with aiohttp.ClientSession() as session:
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=ru"
-        async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=10)) as geo_resp:
-            if geo_resp.status != 200:
-                return None, f"Geocoding HTTP {geo_resp.status}"
-            geo = await geo_resp.json()
-            results = geo.get("results", [])
-            if not results:
-                return None, "Город не найден"
-            loc = results[0]
-            lat = loc["latitude"]
-            lon = loc["longitude"]
-            name = loc.get("name", city)
-            country = loc.get("country", "")
-
-        w_url = (
-            f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={lat}&longitude={lon}&current="
-            f"temperature_2m,relative_humidity_2m,"
-            f"apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,pressure_msl"
-        )
-        async with session.get(w_url, timeout=aiohttp.ClientTimeout(total=10)) as w_resp:
-            if w_resp.status != 200:
-                return None, f"Weather HTTP {w_resp.status}"
-            w = await w_resp.json()
-            cur = w.get("current", {})
-            temp = cur.get("temperature_2m", "?")
-            feels = cur.get("apparent_temperature", "?")
-            humidity = cur.get("relative_humidity_2m", "?")
-            wind = cur.get("wind_speed_10m", "?")
-            wind_dir = cur.get("wind_direction_10m", "")
-            pressure = cur.get("pressure_msl", "?")
-            code = cur.get("weather_code", 0)
-            wmo_desc = {
-                0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-                45: "Fog", 48: "Depositing rime fog",
-                51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-                61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-                71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
-                80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-                95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
-            }
-            desc = wmo_desc.get(code, "Unknown")
-            emoji = _weather_emoji(desc)
-            text = (
-                f"{emoji} Погода в {name}" + (f", {country}\n" if country else "\n")
-                + (f"{emoji} {desc}\n" if desc else "")
-                + f"🌡 Температура: {temp}°C (ощущается {feels}°C)\n"
-                f"💨 Ветер: {wind} km/h {wind_dir}\n"
-                f"💧 Влажность: {humidity}%\n"
-                f"📊 Давление: {pressure} гПа\n\n"
-                f"Источник: Open-Meteo"
-            )
-            return text, None
-
-
-async def get_weather(city: str):
-    try:
-        return await _get_wttr(city)
-    except Exception as e:
-        print(f"[WEATHER] wttr.in failed: {e}, trying fallback")
-    try:
-        return await _get_open_meteo(city)
-    except Exception as e:
-        return None, str(e)[:200]
 
 
 @router.message(lambda m: m.text and m.text.startswith("/weather"))
@@ -2022,5 +1912,14 @@ async def cmd_help(message: Message):
     )
 
 
-# Register remaining button handlers (must come after function definitions)
+# Register remaining button handlers (must come after function definitions).
+# These let _fsm_guard route a button press to the right flow instead of
+# falling back to "press the button again".
 _BUTTON_HANDLERS["❓ Помощь"] = lambda msg, st: cmd_help(msg)
+_BUTTON_HANDLERS["⏰ Напомнить"] = btn_remind
+_BUTTON_HANDLERS["📋 Задача"] = btn_task
+_BUTTON_HANDLERS["📝 Заметка"] = btn_note
+_BUTTON_HANDLERS["🧠 Память"] = cmd_memory
+_BUTTON_HANDLERS["🌤 Погода"] = btn_weather
+_BUTTON_HANDLERS["🔍 Поиск"] = btn_search
+_BUTTON_HANDLERS["📊 Отчёт"] = cmd_report

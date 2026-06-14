@@ -74,6 +74,7 @@ async def test_handler_calls_intent_pipeline_and_sends_answer():
         intent_result=intent,
         db=None,
         state=None,
+        message=message,
     )
     message.answer.assert_awaited_once_with("done", reply_markup=command_keyboard)
 
@@ -124,20 +125,23 @@ async def test_handler_blocks_unauthorized_user():
 async def test_handler_passes_db_attribute_to_executor():
     message = _make_message("hello")
     fake_db = object()
-    smart_message_handler.db = fake_db
+    import bot.handlers.smart as smart_module
+    smart_module.db = fake_db
     intent = MagicMock()
     result = MagicMock()
     result.text = "done"
     result.success = True
     result.reply_markup = None
-    with patch(
-        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock, return_value=intent
-    ), patch(
-        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock, return_value=result
-    ) as mock_exec:
-        await smart_message_handler(message, state=None)
-    assert mock_exec.await_args.kwargs["db"] is fake_db
-    del smart_message_handler.db  # clean up module-level mutation
+    try:
+        with patch(
+            "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock, return_value=intent
+        ), patch(
+            "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock, return_value=result
+        ) as mock_exec:
+            await smart_message_handler(message, state=None)
+        assert mock_exec.await_args.kwargs["db"] is fake_db
+    finally:
+        smart_module.db = None  # restore module state
 
 
 @pytest.mark.asyncio
