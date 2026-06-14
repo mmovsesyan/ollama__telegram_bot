@@ -222,12 +222,14 @@ class LLMIntentRouter:
                 confidence=0.9 if city else 0.5,
             )
 
-        # 7. News.
-        if re.search(r"\b(новост[иь]|news)\b", t):
+        # 7. News — extract optional topic ("новости про ИИ" → query="ИИ").
+        m = re.search(r"\b(?:новост[иь]|news)\b\s*(?:про|об?|по|on|about)?\s*(.*)", t)
+        if m:
+            topic = m.group(1).strip()
             return IntentResult(
                 intent="news",
                 tool="news",
-                args=IntentArgs(),
+                args=IntentArgs(query=topic if topic else None),
                 confidence=0.9,
             )
 

@@ -1848,27 +1848,27 @@ async def process_weather(message: Message, state: FSMContext):
 
 # --- News ---
 
-@router.message(lambda m: m.text and m.text == "/news")
-@router.message(F.text == "📰 Новости")
-async def cmd_news(message: Message):
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        return
+async def _process_news(message: Message, topic: str | None = None):
+    """Run a news web-search. With a topic, search for that topic; without
+    a topic, fall back to the generic 'последние новости сегодня'."""
+    query = topic.strip() if topic and topic.strip() else "последние новости сегодня"
+    label = topic.strip() if topic and topic.strip() else "топ-новости"
+    await message.answer(f"📰 Ищу новости: {label}...")
 
-    await message.answer("📰 Ищу актуальные новости...")
-
-    result, error = await ollama_web_search("последние новости сегодня", max_results=5)
+    result, error = await ollama_web_search(query, max_results=5)
     if error:
         await message.answer(f"❌ {error}", reply_markup=command_keyboard)
         return
 
-    items = result.get("results", [])
+    items = (result or {}).get("results", [])
     if not items:
-        await message.answer("Новостей не найдено.", reply_markup=command_keyboard)
+        await message.answer(
+            f"Новостей по запросу «{label}» не найдено.",
+            reply_markup=command_keyboard,
+        )
         return
 
-    text = "📰 Актуальные новости:\n\n"
+    text = f"📰 {label}:\n\n"
     for i, item in enumerate(items[:5], 1):
         title = item.get("title", "Без названия")
         url = item.get("url", "")
@@ -1889,6 +1889,62 @@ async def cmd_news(message: Message):
         text += "\n"
 
     await message.answer(text[:4096], reply_markup=command_keyboard)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/news"))
+async def cmd_news(message: Message, state: FSMContext):
+    """`/news` alone → ask for topic. `/news <topic>` → search immediately."""
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "📰 По какой теме новости?\n"
+            "Например: «ИИ», «Tesla», «биткоин», «спорт»\n"
+            "Или просто «топ» — покажу самое актуальное.",
+            reply_markup=cancel_keyboard,
+        )
+        await state.set_state(BotStates.waiting_news)
+        return
+    await _process_news(message, parts[1])
+
+
+@router.message(F.text == "📰 Новости")
+async def btn_news(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    await message.answer(
+        "📰 По какой теме новости?\n"
+        "Например: «ИИ», «Tesla», «биткоин», «спорт»\n"
+        "Или просто «топ» — покажу самое актуальное.",
+        reply_markup=cancel_keyboard,
+    )
+    await state.set_state(BotStates.waiting_news)
+
+
+@router.message(BotStates.waiting_news)
+async def process_news(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    topic = message.text.strip()
+    # "топ" / "top" / empty → no topic, fall back to generic
+    if topic.lower() in ("топ", "top", ""):
+        topic = None
+    await _process_news(message, topic)
+    await state.clear()
 
 
 # --- Search ---
@@ -2101,6 +2157,6 @@ _BUTTON_HANDLERS["📝 Заметка"] = btn_note
 _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
 _BUTTON_HANDLERS["🌤 Погода"] = btn_weather
 _BUTTON_HANDLERS["🔍 Поиск"] = btn_search
-_BUTTON_HANDLERS["📰 Новости"] = lambda msg, st: cmd_news(msg)
+_BUTTON_HANDLERS["📰 Новости"] = btn_news
 _BUTTON_HANDLERS["📊 Отчёт"] = cmd_report
 _BUTTON_HANDLERS["📒 Список"] = cmd_reminders

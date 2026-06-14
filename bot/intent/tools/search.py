@@ -53,10 +53,19 @@ class NewsTool(BaseTool):
 
     async def execute(self, context: ToolContext) -> ToolResult:
         from bot.routers.cron import ollama_web_search
-        result, error = await ollama_web_search("последние новости сегодня", max_results=5)
+        # If the LLM extracted a topic ("новости про ИИ" → query="ИИ"),
+        # use it. Otherwise fall back to the generic top-news search.
+        topic = (context.args.query or "").strip()
+        if topic:
+            query = topic
+            header = f"📰 Новости: {topic}"
+        else:
+            query = "последние новости сегодня"
+            header = "📰 Топ-новости"
+        result, error = await ollama_web_search(query, max_results=5)
         if error:
             return ToolResult(text=f"❌ {error}", success=False)
         items = (result or {}).get("results", [])
         if not items:
-            return ToolResult(text="Новостей не найдено.")
-        return ToolResult(text=_format_results("", items, "📰 Актуальные новости:"))
+            return ToolResult(text=f"По запросу «{topic or 'новости'}» ничего не найдено.")
+        return ToolResult(text=_format_results("", items, header))

@@ -21,6 +21,7 @@ class BotStates(StatesGroup):
     waiting_monitor_remove = State()
     waiting_weather = State()
     waiting_search = State()
+    waiting_news = State()
     waiting_fetch = State()
     onboarding_name = State()
     onboarding_country = State()
