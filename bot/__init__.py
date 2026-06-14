@@ -50,9 +50,11 @@ async def main() -> None:
     # Init database
     db = Database(DB_PATH)
 
-    # Inject db into routers
+    # Inject db into routers and services
     completion.db = db
     cron.db = db
+    from bot.services import reminders as reminders_service
+    reminders_service.db = db
 
     # Order matters: cron commands must be checked before generic completion handler
     dp.include_routers(start.router, cron.router, completion.router)
