@@ -35,7 +35,7 @@ db = None  # injected in __init__
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
     "💬 Чат", "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
-    "📝 Заметка", "🧠 Память", "🌤 Погода", "📊 Отчёт",
+    "📝 Заметка", "📒 Список", "🧠 Память", "🌤 Погода", "📊 Отчёт",
     "❓ Помощь",
 }
 
@@ -475,6 +475,7 @@ async def process_remind_time(message: Message, state: FSMContext):
 
 
 @router.message(lambda m: m.text and m.text == "/reminders")
+@router.message(F.text == "📒 Список")
 async def cmd_reminders(message: Message, state: FSMContext):
     await state.clear()
     if message.from_user is None:
@@ -488,27 +489,32 @@ async def cmd_reminders(message: Message, state: FSMContext):
     reminders = db.get_user_reminders(message.from_user.id)
     if not reminders:
         await message.answer(
-            "Нет активных напоминаний.",
+            "📒 Нет активных напоминаний и задач.\n\nДобавь через ⏰ Напомнить или 📋 Задача.",
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")]]
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")],
+                ]
             ),
         )
         return
 
-    text = "⏰ Активные напоминания:\n\n"
+    text = "📒 Активные напоминания и задачи:\n\n"
     buttons = []
     for idx, r in enumerate(reminders, 1):
         time_str = r.get('trigger_at', 'ASAP')
         content = r.get('content', '')
         rec = r.get('recurring')
-        mode = "🤖" if r.get('action') == 'execute' else "⏰"
-        rec_label = f" ({rec})" if rec else ""
-        text += f"#{idx} {mode} | {time_str}{rec_label}\n{content}\n\n"
-        buttons.append([InlineKeyboardButton(text=f"❌ Удалить #{idx}", callback_data=f"del_reminder:{r['id']}")])
+        is_task = r.get('action') == 'execute'
+        mode = "🤖 Задача" if is_task else "⏰ Напоминание"
+        rec_label = f" 🔁 {rec}" if rec else ""
+        text += f"#{idx} {mode}{rec_label}\n🕐 {time_str}\n📝 {content}\n\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"✏️ #{idx}", callback_data=f"edit_reminder:{r['id']}"),
+            InlineKeyboardButton(text=f"❌ #{idx}", callback_data=f"del_reminder:{r['id']}"),
+        ])
 
     buttons.append([InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")])
     await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await message.answer("Главное меню:", reply_markup=command_keyboard)
 
 
 @router.message(lambda m: m.text and m.text.startswith("/remind_cancel"))
@@ -1434,6 +1440,152 @@ async def cb_del_reminder(callback: CallbackQuery):
         await callback.answer("Ошибка удаления", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("edit_reminder:"))
+async def cb_edit_reminder(callback: CallbackQuery, state: FSMContext):
+    """Show inline menu: edit content vs edit time vs cancel."""
+    if not callback.from_user or not callback.data:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
+    try:
+        rid = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer("Неверный ID", show_alert=True)
+        return
+    reminder = db.get_reminder(rid)
+    if not reminder or reminder['user_id'] != callback.from_user.id:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    is_task = reminder.get('action') == 'execute'
+    label = "задачу" if is_task else "напоминание"
+    await callback.message.answer(
+        f"✏️ Редактировать {label} #{rid}\n\n"
+        f"📝 {reminder.get('content', '')}\n"
+        f"🕐 {reminder.get('trigger_at', 'ASAP')}\n\n"
+        f"Что менять?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_rcontent:{rid}")],
+                [InlineKeyboardButton(text="🕐 Время", callback_data=f"edit_rtime:{rid}")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_rcontent:"))
+async def cb_edit_reminder_content(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.data:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    rid = int(callback.data.split(":", 1)[1])
+    await state.update_data(edit_reminder_id=rid)
+    await state.set_state(BotStates.waiting_remind_edit_content)
+    await callback.message.answer(
+        "📝 Введи новый текст:",
+        reply_markup=cancel_keyboard,
+    )
+    await callback.answer("Введи новый текст")
+
+
+@router.callback_query(F.data.startswith("edit_rtime:"))
+async def cb_edit_reminder_time(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.data:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    rid = int(callback.data.split(":", 1)[1])
+    await state.update_data(edit_reminder_id=rid)
+    await state.set_state(BotStates.waiting_remind_edit_time)
+    await callback.message.answer(
+        "🕐 Введи новое время:\n"
+        "Примеры: «через 5 минут», «завтра в 9:00», «каждый день в 7:00», «2026-06-15 09:00»",
+        reply_markup=cancel_keyboard,
+    )
+    await callback.answer("Введи новое время")
+
+
+@router.message(BotStates.waiting_remind_edit_content)
+async def process_edit_reminder_content(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    data = await state.get_data()
+    rid = data.get("edit_reminder_id")
+    reminder = db.get_reminder(rid) if rid else None
+    if not reminder or reminder['user_id'] != message.from_user.id:
+        await message.answer("Нет доступа к этой записи.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    new_content = message.text.strip()
+    if not new_content:
+        await message.answer("Текст не может быть пустым.", reply_markup=cancel_keyboard)
+        return
+    db.update_reminder_content(rid, new_content)
+    await message.answer(
+        f"✅ #{rid} обновлено\n📝 {new_content}",
+        reply_markup=command_keyboard,
+    )
+    await state.clear()
+
+
+@router.message(BotStates.waiting_remind_edit_time)
+async def process_edit_reminder_time(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if message.text is None:
+        await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
+        await state.clear()
+        return
+    if await _fsm_guard(message, state):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    data = await state.get_data()
+    rid = data.get("edit_reminder_id")
+    reminder = db.get_reminder(rid) if rid else None
+    if not reminder or reminder['user_id'] != message.from_user.id:
+        await message.answer("Нет доступа к этой записи.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(message.text.strip())
+    if not parsed:
+        await message.answer(
+            "❓ Не понял время. Примеры: «через 5 минут», «завтра в 9:00», «каждый день в 7:00».",
+            reply_markup=cancel_keyboard,
+        )
+        return
+    db.update_reminder_schedule(rid, trigger_at.isoformat(), recurring)
+    rec_label = f" 🔁 {recurring}" if recurring else ""
+    await message.answer(
+        f"✅ #{rid} обновлено\n🕐 {trigger_at.strftime('%Y-%m-%d %H:%M')}{rec_label}",
+        reply_markup=command_keyboard,
+    )
+    await state.clear()
+
+
 @router.callback_query(F.data.startswith("del_monitor:"))
 async def cb_del_monitor(callback: CallbackQuery):
     if not callback.from_user or not callback.data:
@@ -1923,3 +2075,4 @@ _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
 _BUTTON_HANDLERS["🌤 Погода"] = btn_weather
 _BUTTON_HANDLERS["🔍 Поиск"] = btn_search
 _BUTTON_HANDLERS["📊 Отчёт"] = cmd_report
+_BUTTON_HANDLERS["📒 Список"] = cmd_reminders

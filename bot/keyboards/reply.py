@@ -1,11 +1,12 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-# Main menu: clear separation between chat, tools, memory, reminders and tasks.
+# Main menu: clear separation between chat, tools, memory, reminders/tasks.
 command_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💬 Чат"), KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌤 Погода")],
         [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="📋 Задача"), KeyboardButton(text="📝 Заметка")],
-        [KeyboardButton(text="🧠 Память"), KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="📒 Список"), KeyboardButton(text="🧠 Память"), KeyboardButton(text="📊 Отчёт")],
+        [KeyboardButton(text="❓ Помощь")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,

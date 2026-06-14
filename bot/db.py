@@ -229,6 +229,29 @@ class Database:
             )
             conn.commit()
 
+    def update_reminder_content(self, reminder_id: int, new_content: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE reminders SET content = ? WHERE id = ?",
+                (new_content, reminder_id),
+            )
+            conn.commit()
+
+    def update_reminder_schedule(self, reminder_id: int, trigger_at: str, recurring: str | None):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE reminders SET trigger_at = ?, recurring = ? WHERE id = ?",
+                (trigger_at, recurring, reminder_id),
+            )
+            conn.commit()
+
+    def get_reminder(self, reminder_id: int) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def disable_reminder(self, reminder_id: int):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE reminders SET enabled = 0 WHERE id = ?", (reminder_id,))

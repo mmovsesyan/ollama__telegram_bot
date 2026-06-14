@@ -10,6 +10,8 @@ class BotStates(StatesGroup):
     waiting_remind_time = State()
     waiting_remind_cancel = State()
     waiting_remind_remove = State()
+    waiting_remind_edit_content = State()
+    waiting_remind_edit_time = State()
     waiting_task_text = State()
     waiting_task_time = State()
     waiting_monitor_add = State()
