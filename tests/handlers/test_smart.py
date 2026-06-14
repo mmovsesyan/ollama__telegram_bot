@@ -114,3 +114,30 @@ async def test_handler_sends_error_on_exception():
     call_args = message.answer.await_args
     assert "⚠️" in call_args.args[0]
     assert call_args.kwargs.get("reply_markup") is command_keyboard
+
+
+@pytest.mark.asyncio
+async def test_handler_sends_failed_result_text():
+    message = _make_message()
+    result = MagicMock(text="не удалось", success=False, reply_markup=None)
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock
+    ), patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock, return_value=result
+    ):
+        await smart_message_handler(message, state=None)
+    message.answer.assert_awaited_once_with("не удалось", reply_markup=command_keyboard)
+
+
+@pytest.mark.asyncio
+async def test_handler_error_does_not_call_executor():
+    message = _make_message()
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("boom"),
+    ), patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock
+    ) as mock_exec:
+        await smart_message_handler(message, state=None)
+    mock_exec.assert_not_awaited()

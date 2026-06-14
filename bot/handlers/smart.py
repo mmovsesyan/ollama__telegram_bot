@@ -10,6 +10,7 @@ from bot.keyboards.reply import command_keyboard
 logger = logging.getLogger(__name__)
 
 router = Router()
+_default_executor = IntentExecutor()
 
 
 @router.message(F.text)
@@ -25,9 +26,11 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     user_id = message.from_user.id
     text = message.text.strip()
 
+    # Broad catch-all keeps the Telegram handler from crashing on any pipeline bug;
+    # individual tools already have their own exception handling.
     try:
         intent_result = await LLMIntentRouter.route(user_id=user_id, message_text=text)
-        result = await IntentExecutor().execute(
+        result = await _default_executor.execute(
             user_id=user_id,
             message_text=text,
             intent_result=intent_result,
