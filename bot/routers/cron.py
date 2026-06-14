@@ -1358,6 +1358,30 @@ async def process_memory_add(message: Message, state: FSMContext):
     category = data.get("memory_category", "auto")
     cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
 
+    # Memory is not for scheduled actions. Detect time-like requests and redirect.
+    time_patterns = [
+        r"кажд(ый|ое|ую)\s+",
+        r"ежедневно|еженедельно|ежемесячно|по\s+будням|по\s+выходным|будни|выходные",
+        r"через\s+\d+",
+        r"завтра\s+в\s+\d{1,2}:\d{2}",
+        r"сегодня\s+в\s+\d{1,2}:\d{2}",
+        r"в\s+\d{1,2}:\d{2}",
+        r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}",
+        r"утра|дня|вечера|ночи",
+        r"понедельник|вторник|среда|четверг|пятница|суббота|воскресенье",
+    ]
+    looks_scheduled = any(re.search(p, content, re.IGNORECASE) for p in time_patterns)
+    if looks_scheduled:
+        await message.answer(
+            "🧠 Это похоже на задачу или напоминание, а не на факт/предпочтение/заметку.\n\n"
+            "Используй кнопки:\n"
+            "📋 Задача — если хочешь, чтобы AI сам выполнил по расписанию\n"
+            "⏰ Напоминание — если нужно просто напомнить",
+            reply_markup=command_keyboard,
+        )
+        await state.clear()
+        return
+
     if category == "auto":
         await message.answer("🤖 Определяю категорию...")
         category = await _classify_memory(content)
