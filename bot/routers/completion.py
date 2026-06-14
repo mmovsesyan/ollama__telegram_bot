@@ -1004,7 +1004,7 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
                     "🔍 Введи данные монитора:\n<имя> <url> [интервал]\nПример: Google google.com 5m",
                     reply_markup=cancel_keyboard,
                 )
-                await state.set_state(BotStates.waiting_monitor_add)
+                await state.set_state(BotStates.waiting_monitor_name)
                 return
             if intent == "models":
                 await cmd_models(message)

@@ -274,7 +274,9 @@ def parse_reminder(text: str) -> tuple[datetime, str | None]:
     def _extract_time(txt: str) -> tuple[int, int]:
         m = re.search(r'(\d{1,2}):(\d{2})', txt)
         if m:
-            return int(m.group(1)), int(m.group(2))
+            h = max(0, min(23, int(m.group(1))))
+            minute = max(0, min(59, int(m.group(2))))
+            return h, minute
         if re.search(r'\b7\s*утра\b|\b07\s*утра\b', txt):
             return 7, 0
         if re.search(r'\b9\s*утра\b|\b09\s*утра\b', txt):
@@ -341,31 +343,42 @@ def parse_reminder(text: str) -> tuple[datetime, str | None]:
                 target += timedelta(days=days_ahead)
             return target, recurrence
 
-    if text.startswith("через"):
-        match = re.search(r'\d+', text)
-        if match:
-            num = int(match.group())
-            if re.search(r'минут|мин|м(?![а-я])', text):
-                return now + timedelta(minutes=num), None
-            if re.search(r'час|ч(?![а-я])', text):
-                return now + timedelta(hours=num), None
-            if re.search(r'день|дня|дней|д(?![а-я])', text):
-                return now + timedelta(days=num), None
+    through_match = re.search(r'через\s+(\d+)\s*(минут|мин|час|ч|день|дня|дней|д)?', text)
+    if through_match:
+        num = int(through_match.group(1))
+        unit = (through_match.group(2) or "").lower()
+        if unit in ("минут", "мин", "м"):
+            return now + timedelta(minutes=num), None
+        if unit in ("час", "ч"):
+            return now + timedelta(hours=num), None
+        if unit in ("день", "дня", "дней", "д"):
+            return now + timedelta(days=num), None
+        return now + timedelta(minutes=num), None
 
     today_match = re.search(r'сегодня\s+в\s+(\d{1,2}):(\d{2})', text)
     if today_match:
-        h, m = int(today_match.group(1)), int(today_match.group(2))
-        return now.replace(hour=h, minute=m, second=0, microsecond=0), None
+        h = max(0, min(23, int(today_match.group(1))))
+        m = max(0, min(59, int(today_match.group(2))))
+        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return target, None
 
     if "завтра" in text:
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
-            h, m = int(time_match.group(1)), int(time_match.group(2))
+            h = max(0, min(23, int(time_match.group(1))))
+            m = max(0, min(59, int(time_match.group(2))))
+        else:
+            h, m = 9, 0
         tomorrow = now + timedelta(days=1)
         return tomorrow.replace(hour=h, minute=m, second=0, microsecond=0), None
 
     try:
-        return datetime.fromisoformat(text), None
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt, None
     except Exception:
         pass
 
@@ -407,6 +420,7 @@ async def _classify_memory(content: str) -> str:
 
 @router.message(lambda m: m.text and (m.text == "/remind" or m.text.startswith("/remind ")))
 async def cmd_remind(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -430,6 +444,7 @@ async def cmd_remind(message: Message, state: FSMContext):
 
 @router.message(F.text == "⏰ Напомнить")
 async def btn_remind(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -447,6 +462,11 @@ async def btn_remind(message: Message, state: FSMContext):
 
 
 async def _process_remind(user_id: int, text: str, action: str = "notify"):
+    if db is None:
+        from bot.bot import bot as aiogram_bot
+        await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
+        return
+
     trigger_at, recurring = parse_reminder(text)
 
     time_patterns = [
@@ -458,7 +478,7 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
 
     content = text
     for pattern in time_patterns:
-        match = re.match(pattern, text)
+        match = re.match(pattern, text, flags=re.IGNORECASE)
         if match:
             time_str = match.group(1)
             content = text[len(time_str):].strip()
@@ -489,6 +509,11 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
 
 async def _process_task_from_text(user_id: int, text: str):
     """Free-form task: parse time, strip it from content, schedule AI execution."""
+    if db is None:
+        from bot.bot import bot as aiogram_bot
+        await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
+        return
+
     trigger_at, recurring = parse_reminder(text)
 
     time_patterns = [
@@ -592,6 +617,11 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
     else:
         trigger_at = now + timedelta(minutes=5)
 
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        await state.clear()
+        return
+
     rid = db.add_reminder(
         user_id=callback.from_user.id,
         content=content,
@@ -629,6 +659,10 @@ async def process_remind_time(message: Message, state: FSMContext):
         return
     time_text = message.text.strip()
     trigger_at, recurring = parse_reminder(time_text)
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
+        return
     rid = db.add_reminder(
         user_id=message.from_user.id,
         content=content,
@@ -647,7 +681,8 @@ async def process_remind_time(message: Message, state: FSMContext):
 
 
 @router.message(lambda m: m.text and m.text == "/reminders")
-async def cmd_reminders(message: Message):
+async def cmd_reminders(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -679,10 +714,12 @@ async def cmd_reminders(message: Message):
 
     buttons.append([InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")])
     await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer("Главное меню:", reply_markup=command_keyboard)
 
 
 @router.message(lambda m: m.text and m.text.startswith("/remind_cancel"))
 async def cmd_remind_cancel(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -742,6 +779,7 @@ async def process_remind_cancel(message: Message, state: FSMContext):
 
 @router.message(F.text == "📋 Задача")
 async def btn_task(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -764,6 +802,7 @@ async def btn_task(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text == "/task")
 async def cmd_task(message: Message, state: FSMContext):
+    await state.clear()
     await btn_task(message, state)
 
 
@@ -907,6 +946,7 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "📝 Заметка")
 async def btn_note(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -931,6 +971,7 @@ async def btn_note(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text.startswith("/note"))
 async def cmd_note(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -998,6 +1039,7 @@ async def process_note(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text.startswith("/monitor_add"))
 async def cmd_monitor_add(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1115,6 +1157,10 @@ async def _finish_monitor_add(message: Message, state: FSMContext, user_id: int)
 
 
 async def _process_monitor_add(message: Message, name: str, url: str, interval: int, expected_status: int = 200):
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
     status_text = "⏳ Проверяю..."
     status_msg = await message.answer(status_text)
     try:
@@ -1149,7 +1195,8 @@ async def _process_monitor_add(message: Message, name: str, url: str, interval: 
 
 
 @router.message(lambda m: m.text and m.text == "/monitors")
-async def cmd_monitors(message: Message):
+async def cmd_monitors(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1188,10 +1235,12 @@ async def cmd_monitors(message: Message):
 
     buttons.append([InlineKeyboardButton(text="➕ Добавить монитор", callback_data="add_monitor")])
     await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer("Главное меню:", reply_markup=command_keyboard)
 
 
 @router.message(lambda m: m.text and m.text.startswith("/monitor_remove"))
 async def cmd_monitor_remove(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1251,7 +1300,8 @@ async def process_monitor_remove(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text.startswith("/report"))
 @router.message(F.text == "📊 Отчёт")
-async def cmd_report(message: Message):
+async def cmd_report(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1284,7 +1334,8 @@ async def cmd_report(message: Message):
 
 @router.message(lambda m: m.text and m.text == "/memory")
 @router.message(F.text == "🧠 Память")
-async def cmd_memory(message: Message):
+async def cmd_memory(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1301,6 +1352,7 @@ async def cmd_memory(message: Message):
 
 @router.message(lambda m: m.text and m.text.startswith("/memory_add"))
 async def cmd_memory_add(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1400,6 +1452,7 @@ async def process_memory_add(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text.startswith("/memory_remove"))
 async def cmd_memory_remove(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1516,6 +1569,9 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
 
 
 async def _show_memories(user_id: int, message: Message):
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
     memories = db.get_memories(user_id)
     if not memories:
         await message.answer(
@@ -1535,6 +1591,7 @@ async def _show_memories(user_id: int, message: Message):
 
     buttons.append([InlineKeyboardButton(text="➕ Добавить", callback_data="memory_menu:add_auto")])
     await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer("Главное меню:", reply_markup=command_keyboard)
 
 
 # --- Inline delete callbacks ---
@@ -1545,6 +1602,9 @@ async def cb_del_reminder(callback: CallbackQuery):
         return
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
         return
     try:
         rid = int(callback.data.split(":", 1)[1])
@@ -1570,6 +1630,9 @@ async def cb_del_monitor(callback: CallbackQuery):
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
     try:
         mid = int(callback.data.split(":", 1)[1])
         user_monitors = db.get_monitors(callback.from_user.id)
@@ -1594,6 +1657,9 @@ async def cb_del_memory(callback: CallbackQuery):
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
     try:
         mid = int(callback.data.split(":", 1)[1])
         user_memories = db.get_memories(callback.from_user.id)
@@ -1617,6 +1683,9 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
         return
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
         return
 
     category = callback.data.split(":", 1)[1]
@@ -1649,6 +1718,7 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
         reply_markup=command_keyboard,
     )
     await state.clear()
+    await callback.answer("Сохранено")
 
 
 @router.callback_query(F.data == "add_memory")
@@ -1658,6 +1728,7 @@ async def cb_add_memory(callback: CallbackQuery, state: FSMContext):
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
+    await state.clear()
     await callback.answer("Добавление записи")
     await callback.message.answer(
         "🧠 Что запомнить?\n"
@@ -1675,6 +1746,7 @@ async def cb_add_reminder(callback: CallbackQuery, state: FSMContext):
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
+    await state.clear()
     await callback.answer("Добавление напоминания")
     await callback.message.answer(
         "⏰ Чего напомнить?\n"
@@ -1691,6 +1763,7 @@ async def cb_add_monitor(callback: CallbackQuery, state: FSMContext):
     if not _is_allowed(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
+    await state.clear()
     await callback.answer("Добавление монитора")
     await callback.message.answer(
         "🔍 Название монитора?\n"
@@ -1702,11 +1775,12 @@ async def cb_add_monitor(callback: CallbackQuery, state: FSMContext):
 
 # Register button handlers for instant FSM routing
 _BUTTON_HANDLERS.update({
+    "💬 Чат": lambda msg, st: None,
     "🔍 Поиск": lambda msg, st: btn_search(msg, st),
     "⏰ Напомнить": lambda msg, st: btn_remind(msg, st),
     "📋 Задача": lambda msg, st: btn_task(msg, st),
     "📝 Заметка": lambda msg, st: btn_note(msg, st),
-    "🧠 Память": lambda msg, st: cmd_memory(msg),
+    "🧠 Память": lambda msg, st: cmd_memory(msg, st),
     "🌤 Погода": lambda msg, st: btn_weather(msg, st),
     "📊 Отчёт": lambda msg, st: cmd_report(msg),
     "❓ Помощь": lambda msg, st: cmd_help(msg),
@@ -1850,6 +1924,7 @@ async def get_weather(city: str):
 
 @router.message(lambda m: m.text and m.text.startswith("/weather"))
 async def cmd_weather(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -1954,6 +2029,7 @@ async def cmd_news(message: Message):
 
 @router.message(lambda m: m.text and m.text.startswith("/search"))
 async def cmd_search(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
@@ -2047,6 +2123,7 @@ async def process_search(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text and m.text.startswith("/fetch"))
 async def cmd_fetch(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
