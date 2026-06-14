@@ -6,6 +6,8 @@
 
 С долгосрочной памятью, напоминаниями, веб-поиском, мониторингом сайтов и распознаванием голоса.
 
+🌐 [English version below](#-ollama-telegram-bot-english)
+
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Poetry](https://img.shields.io/badge/poetry-2.x-blueviolet.svg)](https://python-poetry.org/)
 [![Ollama](https://img.shields.io/badge/ollama-cloud%20%7C%20local-white.svg)](https://ollama.com/)
@@ -30,7 +32,7 @@
 | 🌤 **Погода** | wttr.in + Open-Meteo fallback, в твоей таймзоне |
 | 📰 **Новости** | По теме («ИИ», «Tesla») или общий топ |
 | 🔎 **Мониторинг сайтов** | Проверка URL с алертами в Telegram, состояние alert переживает рестарт |
-| 📄 **Файлы** | Извлечение текста из PDF, DOCX, CSV, TXT, JSON и других |
+| 📄 **Файлы** | Извлечение текста из PDF, DOCX, XLSX, CSV, TXT, JSON, MD и других |
 | 🌍 **Локализация** | Бот спрашивает имя и страну при первом запуске, всё время — в твоей таймзоне |
 | ✏️ **Редактирование** | Редактируй текст или время напоминаний/задач прямо в Telegram |
 
@@ -240,5 +242,208 @@ main.py
 ---
 
 ## 📄 Лицензия
+
+MIT
+
+---
+
+<div align="center">
+
+# 🤖 Ollama Telegram Bot (English)
+
+**Cross-platform Telegram AI bot powered by Ollama**
+
+With long-term memory, reminders, web search, site monitoring, and voice recognition.
+
+</div>
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 💬 **AI chat** | Contextual dialog with model switching, like/dislike buttons, history persistence and compaction |
+| 🎤 **Voice messages** | Speech-to-text via Whisper, processed the same way as text |
+| 🧠 **Memory** | Facts, preferences, notes. Auto-extract after each reply, LLM-compaction for long entries |
+| 📚 **Knowledge base (FTS5)** | Full-text search over your memory. "What did I say about X" — instant, no LLM. Empty result falls back to the web |
+| 📝 **Notes** | Save personal notes in the user profile |
+| ⏰ **Reminders** | One-shot and recurring: daily, weekdays, weekends, weekly, monthly |
+| 🤖 **AI tasks** | Reminders the AI executes at the scheduled time (weather, web search, etc.) |
+| 🔍 **Web search** | Search and fetch pages via the Ollama Web API |
+| 🌤 **Weather** | wttr.in with Open-Meteo fallback, in your timezone |
+| 📰 **News** | By topic ("AI", "Tesla") or general top headlines |
+| 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
+| 📄 **Files** | Text extraction from PDF, DOCX, XLSX, CSV, TXT, JSON, MD and more |
+| 🌍 **Localization** | Bot asks for name and country on first launch, all times shown in your timezone |
+| ✏️ **Editing** | Edit reminder/task text or time directly in Telegram |
+
+---
+
+## 🚀 Quick install
+
+### 1. One-liner (recommended)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install.sh | bash
+```
+
+The script will:
+- check and install **Python 3.10+**, **git**, **ffmpeg**, **Poetry**;
+- install Python dependencies;
+- pre-download the Whisper model;
+- interactively create `.env` with the required keys.
+
+On Linux **sudo** is required for system packages — the script will ask.
+On macOS Homebrew is used (usually no sudo needed).
+
+### 2. Fully unattended (servers / CI)
+
+```bash
+export TELEGRAM_TOKEN="123456:ABC..."
+export OLLAMA_API_KEY="your_ollama_key"
+export OLLAMA_BOT_MODEL="kimi-k2.7-code:cloud"
+export OLLAMA_API_HOST="https://api.ollama.com"
+
+curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install_auto.sh | bash
+```
+
+Silent mode without prompts:
+
+```bash
+AUTO_INSTALL=1 curl -sSL https://raw.githubusercontent.com/mmovsesyan/ollama__telegram_bot/main/install_auto.sh | bash
+```
+
+### 3. Manual (if git is already available)
+
+```bash
+git clone https://github.com/mmovsesyan/ollama__telegram_bot.git
+cd ollama__telegram_bot
+./scripts/install_deps.sh
+./run.sh env
+./run.sh start
+```
+
+---
+
+## 🖥 Supported platforms
+
+- **macOS** 11+ (Intel and Apple Silicon)
+- **Linux**:
+  - Ubuntu / Debian / Pop!_OS / Linux Mint / Zorin OS / elementary OS
+  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux / Nobara
+  - Arch Linux / Manjaro / EndeavourOS / Garuda
+- **Windows** via **WSL2** or Git Bash
+
+---
+
+## 🎛 Bot management
+
+```bash
+./run.sh start      # start (creates .env on first run)
+./run.sh stop       # stop
+./run.sh restart    # restart
+./run.sh status     # status
+./run.sh logs       # tail logs in real time
+./run.sh env        # recreate .env
+./run.sh deps       # install/upgrade dependencies
+```
+
+Auto-update:
+
+```bash
+./update.sh         # git pull + dependency upgrade + restart
+```
+
+System service and cron-based auto-update:
+
+```bash
+./install_service.sh
+```
+
+---
+
+## 📋 How to talk to the bot
+
+On the first `/start` the bot asks for your name and country — needed so reminders fire in your local timezone.
+
+Then just write or speak:
+
+- "weather in Moscow"
+- "weather in San Francisco"
+- "remind me in 5 minutes to call"
+- "tomorrow at 9:00 check the report"
+- "every morning at 9 show the news" (this is a task — the AI will execute it)
+- "remember I prefer short answers"
+- "note: buy TSLA shares"
+- "find latest Tesla news"
+- "news about AI"
+- "what did I say about Tesla?" — searches your KB, falls back to the web if empty
+- "watch google.com"
+
+> 💡 Voice messages are transcribed via Whisper and routed through the same pipeline as text.
+
+> ⚡ Obvious commands (remind, weather, search) are matched instantly via regex, no LLM. Complex queries go through the LLM router with a 15-second timeout.
+
+### Bot commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Onboarding (name + timezone) or back to main menu |
+| `/help` | Full help with examples |
+| `/remind` | Add a reminder (step-by-step) |
+| `/reminders` | List reminders and tasks with edit/delete buttons |
+| `/task` | Add an AI task (step-by-step) |
+| `/memory` | Memory menu (facts, preferences, notes) |
+| `/memory_add` | Add a memory entry |
+| `/note` | Save a note |
+| `/kb <query>` | Search your knowledge base (with web fallback) |
+| `/search <query>` | Web-only search |
+| `/weather <city>` | Weather |
+| `/news <topic>` | News by topic (no topic = general top) |
+| `/monitor_add` | Add a site monitor |
+| `/monitors` | List monitors |
+| `/models` | List available models |
+| `/model <name>` | Switch model |
+| `/clear` | Clear chat history |
+| `/report` | Daily report |
+
+---
+
+## ⚙️ `.env` configuration
+
+```env
+# Telegram Bot Token from @BotFather
+TELEGRAM_TOKEN=123456:ABC...
+
+# Optional: comma-separated allowed Telegram IDs
+ALLOWED_CHAT_IDS=
+
+# Ollama Cloud (default) or local Ollama
+OLLAMA_API_HOST=https://api.ollama.com
+OLLAMA_BOT_MODEL=kimi-k2.7-code:cloud
+OLLAMA_API_KEY=your_ollama_api_key
+
+# Web search API key (falls back to OLLAMA_API_KEY if empty)
+OLLAMA_WEB_API_KEY=your_ollama_web_key
+
+# Whisper: model and parameters
+WHISPER_MODEL=tiny         # tiny, base, small, medium, large-v3, turbo
+WHISPER_DEVICE=auto        # cpu, cuda, auto
+WHISPER_COMPUTE_TYPE=default # int8, float16, default
+```
+
+---
+
+## 🛡 Security
+
+- `.env`, logs and the database are excluded from git (`.gitignore`).
+- Git history was scrubbed of secrets.
+- `ALLOWED_CHAT_IDS` restricts who can talk to the bot.
+- Never commit real tokens or keys.
+
+---
+
+## 📄 License
 
 MIT
