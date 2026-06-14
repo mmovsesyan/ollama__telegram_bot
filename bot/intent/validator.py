@@ -1,3 +1,5 @@
+import typing
+
 from bot.intent.schemas import ALLOWED_TOOLS, IntentResult
 
 
@@ -22,13 +24,18 @@ class Validator:
 
     @classmethod
     def validate(cls, result: IntentResult, confidence_threshold: float | None = None) -> None:
-        threshold = confidence_threshold or cls.DEFAULT_CONFIDENCE_THRESHOLD
+        threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else cls.DEFAULT_CONFIDENCE_THRESHOLD
+        )
         if result.confidence < threshold:
             raise ValidationError(f"confidence {result.confidence} below threshold {threshold}")
-        if result.tool not in ALLOWED_TOOLS.__args__:
+        if result.tool not in typing.get_args(ALLOWED_TOOLS):
             raise ValidationError(f"unknown tool: {result.tool}")
         required = cls._required_args.get(result.tool, ())
         args_dict = result.args.model_dump()
         for field in required:
-            if not args_dict.get(field):
+            value = args_dict.get(field)
+            if value is None or value == "":
                 raise ValidationError(f"tool '{result.tool}' missing required arg '{field}'")
