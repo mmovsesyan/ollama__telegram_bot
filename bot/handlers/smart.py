@@ -94,20 +94,27 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
 def _persist_exchange(user_id: int, user_text: str, assistant_text: str) -> None:
     """Save a smart-pipeline exchange to the messages table so the LLM has
     context across tool calls. Without this, free-form chats forget the user
-    just asked for weather / set a reminder / saved a note.
+    just asked for weather / set a reminder / saved a note. Also kicks off
+    a fire-and-forget LLM extraction job that adds salient facts to the KB.
     """
     if db is None:
         return
     try:
         from bot.routers import completion
-        # Reuse completion's session machinery so chat and tool calls share
-        # one session per user. _create_chat is idempotent and bootstraps.
         completion._create_chat(user_id)
         chat = completion.chats.get(user_id)
         if chat and chat.session_id:
             db.save_message(user_id, chat.session_id, "user", user_text, chat.selected_model)
             if assistant_text:
                 db.save_message(user_id, chat.session_id, "assistant", assistant_text, chat.selected_model)
+        # Fire-and-forget fact extraction. Cheap LLM call, runs in background
+        # so the user's response isn't delayed. Errors are silent.
+        if assistant_text:
+            import asyncio as _asyncio
+            from bot.services.kb_extract import extract_facts_from_exchange
+            _asyncio.create_task(
+                extract_facts_from_exchange(db, user_id, user_text, assistant_text)
+            )
     except Exception:
         logger.exception("Failed to persist smart-pipeline exchange for user_id=%s", user_id)
 

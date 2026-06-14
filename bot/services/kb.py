@@ -40,7 +40,9 @@ async def search_kb_with_web_fallback(
     """KB-first search. Returns (rendered_text, hits, used_web).
 
     - hits: rows from the user's memories (may be empty).
-    - used_web: True if we fell back to web search because KB was empty.
+    - used_web: True if we attempted a web fallback (regardless of whether
+      it returned anything). False only when the KB had hits OR the web
+      call itself errored.
     - rendered_text: human-readable result, or empty string if even web
       came back empty.
     """
@@ -55,11 +57,13 @@ async def search_kb_with_web_fallback(
         return "", [], False
 
     result, error = await ollama_web_search(query, max_results=limit)
-    if error or not result:
-        return "", [], False
+    if error:
+        # Web errored (no API key, network, etc) — still tell caller we
+        # tried so the user can be told both sources are empty.
+        return "", [], True
     items = (result or {}).get("results", [])
     if not items:
-        return "", [], False
+        return "", [], True
 
     lines = ["📚 В твоей базе ничего не нашёл, посмотрел в интернете:"]
     lines.append("")

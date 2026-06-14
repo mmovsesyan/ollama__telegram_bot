@@ -249,6 +249,18 @@ async def generate(message: Message, user_id: int, text: str):
     if db and chat.session_id:
         db.save_message(user_id, chat.session_id, "assistant", assistant_content, chat.selected_model)
 
+    # Fire-and-forget fact extraction so the user's reply isn't delayed.
+    # Cheap LLM call (12s timeout, 0-3 facts per turn) populates the KB
+    # so future "что я говорил про X" queries hit local cache.
+    if db and assistant_content.strip():
+        try:
+            from bot.services.kb_extract import extract_facts_from_exchange
+            asyncio.create_task(
+                extract_facts_from_exchange(db, user_id, prompt, assistant_content)
+            )
+        except Exception:
+            pass
+
     if db and chat.session_id:
         asyncio.create_task(_maybe_compact(user_id, chat))
 
@@ -368,6 +380,14 @@ async def _maybe_compact(user_id: int, chat: UserChat):
                                 print(f"[MEMORY] Auto-saved: [{category}] {content}")
         except Exception as mem_err:
             print(f"[MEMORY] Extraction failed: {mem_err}")
+
+        # Background pass: any long memories (>500 chars) without a summary
+        # get one. Bounded to 5/run so a backlog doesn't burn tokens.
+        try:
+            from bot.services.kb_extract import compress_pending_memories
+            asyncio.create_task(compress_pending_memories(db, user_id, limit=5))
+        except Exception:
+            pass
 
         base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][:1]
         summary_msg = OllamaChatMessage(
