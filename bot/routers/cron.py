@@ -27,6 +27,10 @@ from bot.services import reminders as reminders_service
 
 router = Router()
 
+# Re-export service helpers so existing `from bot.routers.cron import ...` keep working.
+_process_remind = reminders_service._process_remind
+_process_task_from_text = reminders_service._process_task_from_text
+
 db = None  # injected in __init__
 
 # Known command buttons that should cancel pending FSM input
