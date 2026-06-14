@@ -39,6 +39,7 @@ async def main() -> None:
     from bot.bot import bot as aiogram_bot
     from bot.bot import dp
     from bot.routers import start, completion, cron
+    from bot.handlers import smart as smart_handler
 
     # Set Telegram menu commands
     try:
@@ -56,8 +57,9 @@ async def main() -> None:
     from bot.services import reminders as reminders_service
     reminders_service.db = db
 
-    # Order matters: cron commands must be checked before generic completion handler
-    dp.include_routers(start.router, cron.router, completion.router)
+    # Order matters: explicit cron commands and FSM states must be checked before the
+    # smart free-form text handler. Smart handler replaces the legacy catch-all completion router.
+    dp.include_routers(start.router, cron.router, smart_handler.router, completion.router)
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()
