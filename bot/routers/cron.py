@@ -1353,11 +1353,25 @@ async def process_memory_add(message: Message, state: FSMContext):
     if not content:
         await message.answer("Ожидался текст.", reply_markup=cancel_keyboard)
         return
-    await state.update_data(memory_content=content)
+
+    data = await state.get_data()
+    category = data.get("memory_category", "auto")
+    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+
+    if category == "auto":
+        await message.answer("🤖 Определяю категорию...")
+        category = await _classify_memory(content)
+
+    if category not in ("fact", "preference", "note"):
+        category = "note"
+
+    mid = db.add_memory(message.from_user.id, category, content)
     await message.answer(
-        f"🧠 Запомнить: {content}\n\nВыбери категорию:",
-        reply_markup=memory_category_keyboard(),
+        f"✅ Сохранено: {cat_names.get(category, category)}\n"
+        f"#{mid} | {content}",
+        reply_markup=command_keyboard,
     )
+    await state.clear()
 
 
 @router.message(lambda m: m.text and m.text.startswith("/memory_remove"))
