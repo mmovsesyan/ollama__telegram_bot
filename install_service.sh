@@ -28,14 +28,14 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
     echo ""
     read -rp "Установить launchd agent? [y/N]: " install_launchd
     if [[ "${install_launchd:-}" =~ ^[Yy]$ ]]; then
-        PLIST_SRC="$APP_DIR/com.mmovsesyan.ollama-telegram-bot.plist"
-        PLIST_DST="$HOME/Library/LaunchAgents/com.mmovsesyan.ollama-telegram-bot.plist"
+        PLIST_SRC="$APP_DIR/local.ollama-telegram-bot.plist"
+        PLIST_DST="$HOME/Library/LaunchAgents/local.ollama-telegram-bot.plist"
 
         sed "s|/Users/%USER%/ollama__telegram_bot|$APP_DIR|g; s|%USER%|$USER_NAME|g" "$PLIST_SRC" > "$PLIST_DST"
         launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap gui/$(id -u) "$PLIST_DST"
         echo "✅ LaunchAgent установлен."
-        echo "   Старт: launchctl start com.mmovsesyan.ollama-telegram-bot"
-        echo "   Стоп: launchctl stop com.mmovsesyan.ollama-telegram-bot"
+        echo "   Старт: launchctl start local.ollama-telegram-bot"
+        echo "   Стоп: launchctl stop local.ollama-telegram-bot"
     fi
 else
     echo "❌ Неподдерживаемая платформа. Используйте ./run.sh start"

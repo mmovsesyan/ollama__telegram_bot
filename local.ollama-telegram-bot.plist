@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.mmovsesyan.ollama-telegram-bot</string>
+    <string>local.ollama-telegram-bot</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
