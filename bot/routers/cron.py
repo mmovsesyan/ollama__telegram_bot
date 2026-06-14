@@ -60,9 +60,9 @@ def _format_trigger(trigger_at, user_id: int) -> str:
 
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
-    "💬 Чат", "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
-    "📝 Заметка", "📒 Список", "🧠 Память", "🌤 Погода", "📊 Отчёт",
-    "❓ Помощь",
+    "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
+    "📝 Заметка", "📒 Список", "🧠 Память", "🌤 Погода", "📰 Новости",
+    "📊 Отчёт", "❓ Помощь",
 }
 
 # Button text → handler mapping for instant routing when pressed during FSM
@@ -1849,6 +1849,7 @@ async def process_weather(message: Message, state: FSMContext):
 # --- News ---
 
 @router.message(lambda m: m.text and m.text == "/news")
+@router.message(F.text == "📰 Новости")
 async def cmd_news(message: Message):
     if message.from_user is None:
         return
@@ -2100,5 +2101,6 @@ _BUTTON_HANDLERS["📝 Заметка"] = btn_note
 _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
 _BUTTON_HANDLERS["🌤 Погода"] = btn_weather
 _BUTTON_HANDLERS["🔍 Поиск"] = btn_search
+_BUTTON_HANDLERS["📰 Новости"] = lambda msg, st: cmd_news(msg)
 _BUTTON_HANDLERS["📊 Отчёт"] = cmd_report
 _BUTTON_HANDLERS["📒 Список"] = cmd_reminders

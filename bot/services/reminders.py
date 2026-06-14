@@ -477,6 +477,28 @@ async def _process_task_from_text(user_id: int, text: str):
     content = text.replace(time_str, "").strip() if time_str else text
     content = re.sub(r"\s+", " ", content).strip(",. ")
 
+    # Strip task-keyword prefix so "поставь задачу погода в Москве" → "погода в Москве".
+    content = re.sub(
+        r"^\s*(?:поставь\s+задачу|задач[ау]|добавь\s+задачу|создай\s+задачу|"
+        r"запланируй\s+задачу|task)\b[:,]?\s*",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # Validate that the task is actionable. "погода" without a city, "поищи"
+    # without a query, etc., would silently fail at execute-time. Catch it
+    # NOW so the user can fix it before the trigger fires.
+    error = _validate_task_content(content)
+    if error:
+        from bot.bot import bot as aiogram_bot
+        await aiogram_bot.send_message(
+            chat_id=user_id,
+            text=f"❓ Не понял задачу: {error}\n\nПример: «задача через час погода в Москве», «задача завтра в 9 поищи новости Tesla».",
+            reply_markup=command_keyboard,
+        )
+        return
+
     if not trigger_at:
         trigger_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
@@ -498,3 +520,29 @@ async def _process_task_from_text(user_id: int, text: str):
              f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
+
+
+def _validate_task_content(content: str) -> str | None:
+    """Return an error message if the AI-executable task content is missing
+    required arguments. None if the content looks fine.
+
+    The execution path tries _execute_smart() in tasks_exec.py, which routes
+    on keywords. If the user wrote "погода" without a city, the executor
+    would reply "укажите город" 5 minutes later. Catch it now."""
+    if not content or len(content) < 3:
+        return "пустой текст задачи"
+    lowered = content.lower()
+    # Weather without city
+    if re.search(r"\bпогод|\bweather|\bтемператур", lowered):
+        # Strip the keyword and check what's left
+        stripped = re.sub(r"\b(?:погод\w*|weather|температур\w*|прогноз\w*)\b", "", lowered)
+        stripped = re.sub(r"\b(?:в|in|для|по|сейчас|today|current)\b", "", stripped)
+        stripped = re.sub(r"[^\w\s\-]", "", stripped).strip()
+        if not stripped:
+            return "не указан город. Скажи «погода в Москве» или похоже."
+    # Search without query
+    if re.search(r"^\s*(?:поищи|найди|загугли|search)\b", lowered):
+        stripped = re.sub(r"^\s*(?:поищи|найди|загугли|search)\b\s*", "", lowered).strip()
+        if not stripped or len(stripped) < 3:
+            return "не указан запрос для поиска. Скажи «поищи новости Tesla»."
+    return None

@@ -19,9 +19,9 @@ db = None
 # Texts that are handled by reply-button or explicit-command routers should not
 # be processed by the free-form smart pipeline.
 _BUTTON_COMMANDS = {
-    "💬 Чат",
     "🔍 Поиск",
     "🌤 Погода",
+    "📰 Новости",
     "⏰ Напомнить",
     "📋 Задача",
     "📝 Заметка",

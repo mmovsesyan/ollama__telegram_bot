@@ -62,9 +62,11 @@ async def main() -> None:
     from bot.services import reminders as reminders_service
     reminders_service.db = db
 
-    # Order matters: explicit cron commands and FSM states must be checked before the
-    # smart free-form text handler. Smart handler replaces the legacy catch-all completion router.
-    dp.include_routers(start.router, cron.router, smart_handler.router, completion.router)
+    # Order matters: explicit cron commands and FSM states must be checked
+    # before the smart free-form text handler. completion.router goes BEFORE
+    # smart so its button matchers (F.text == "❓ Помощь" etc.) win — smart
+    # is the catch-all for everything else.
+    dp.include_routers(start.router, cron.router, completion.router, smart_handler.router)
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()

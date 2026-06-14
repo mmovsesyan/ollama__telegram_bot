@@ -1,9 +1,11 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-# Main menu: clear separation between chat, tools, memory, reminders/tasks.
+# Main menu: clear separation between tools, memory, reminders/tasks.
+# Free-form chat doesn't need a button — users just type. Removing it
+# frees a slot for actually useful actions.
 command_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💬 Чат"), KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌤 Погода")],
+        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌤 Погода"), KeyboardButton(text="📰 Новости")],
         [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="📋 Задача"), KeyboardButton(text="📝 Заметка")],
         [KeyboardButton(text="📒 Список"), KeyboardButton(text="🧠 Память"), KeyboardButton(text="📊 Отчёт")],
         [KeyboardButton(text="❓ Помощь")],
