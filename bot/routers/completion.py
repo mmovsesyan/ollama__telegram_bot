@@ -685,8 +685,8 @@ async def _download_document(document):
 def _extract_text_from_file(file_path: str, suffix: str) -> str:
     if suffix == ".pdf":
         try:
-            import PyPDF2
-            reader = PyPDF2.PdfReader(file_path)
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
             parts = []
             for i, page in enumerate(reader.pages):
                 parts.append(page.extract_text() or "")
@@ -695,7 +695,7 @@ def _extract_text_from_file(file_path: str, suffix: str) -> str:
                     break
             return "\n".join(parts)
         except ImportError:
-            return "[PDF: установите PyPDF2 для извлечения текста]"
+            return "[PDF: установите pypdf для извлечения текста]"
         except Exception as e:
             return f"[PDF extraction error: {e}]"
     elif suffix == ".json":
