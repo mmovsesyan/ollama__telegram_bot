@@ -254,3 +254,35 @@ class TestLLMIntentRouter:
         assert result.tool == "chat"
         assert result.confidence == 0.0
         assert result.args.content == "hello"
+
+    @pytest.mark.asyncio
+    async def test_router_falls_back_on_missing_intent(self):
+        fake_chunk = self._make_chunk(
+            '{"tool":"chat","args":{},"confidence":0.9}'
+        )
+
+        with patch(
+            "bot.intent.router.generate_chat_completion",
+            return_value=_FakeAsyncIterator([(False, fake_chunk)]),
+        ):
+            result = await LLMIntentRouter.route(user_id=1, message_text="hello")
+
+        assert result.intent == "chat"
+        assert result.tool == "chat"
+        assert result.confidence == 0.0
+        assert result.args.content == "hello"
+
+    @pytest.mark.asyncio
+    async def test_router_extracts_json_after_explanatory_braces(self):
+        content = 'Note: {not json} Final intent: {"intent":"chat","tool":"chat","args":{},"confidence":0.88}'
+        fake_chunk = self._make_chunk(content)
+
+        with patch(
+            "bot.intent.router.generate_chat_completion",
+            return_value=_FakeAsyncIterator([(False, fake_chunk)]),
+        ):
+            result = await LLMIntentRouter.route(user_id=1, message_text="hello")
+
+        assert result.intent == "chat"
+        assert result.tool == "chat"
+        assert result.confidence == 0.88

@@ -87,11 +87,24 @@ class LLMIntentRouter:
             text = re.sub(r"\s*```$", "", text)
         text = text.strip()
 
-        # Extract the first balanced {...} object, respecting string literals.
-        first_brace = text.find("{")
-        if first_brace == -1:
-            return text
+        # Find the first balanced {...} block that parses as JSON.
+        start = 0
+        while True:
+            first_brace = text.find("{", start)
+            if first_brace == -1:
+                return text
 
+            candidate = cls._extract_balanced_json(text, first_brace)
+            try:
+                json.loads(candidate)
+                return candidate
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON here; keep searching from the next character.
+                start = first_brace + 1
+                continue
+
+    @classmethod
+    def _extract_balanced_json(cls, text: str, first_brace: int) -> str:
         depth = 0
         in_string = False
         escaped = False
