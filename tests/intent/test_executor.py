@@ -114,3 +114,77 @@ class TestIntentExecutor:
         registry = MagicMock()
         executor = IntentExecutor(registry=registry)
         assert executor.registry is registry
+
+    @pytest.mark.asyncio
+    async def test_clarification_needed_short_circuits_validation(self):
+        intent_result = IntentResult(
+            intent="create_reminder",
+            tool="remind",
+            args=IntentArgs(),
+            confidence=0.95,
+            clarification_needed=True,
+            clarification_question="Во сколько напомнить?",
+        )
+        registry = MagicMock()
+        executor = IntentExecutor(registry=registry)
+
+        tool_result = await executor.execute(
+            user_id=4,
+            message_text="напомни позвонить",
+            intent_result=intent_result,
+        )
+
+        assert tool_result.text == "Во сколько напомнить?"
+        assert tool_result.extra["reason"] == "clarification_needed"
+        registry.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_default_clarify_text_when_no_question(self):
+        intent_result = IntentResult(
+            intent="create_reminder",
+            tool="remind",
+            args=IntentArgs(),
+            confidence=0.95,
+            clarification_needed=True,
+            clarification_question=None,
+        )
+        registry = MagicMock()
+        executor = IntentExecutor(registry=registry)
+
+        tool_result = await executor.execute(
+            user_id=5,
+            message_text="напомни",
+            intent_result=intent_result,
+        )
+
+        assert "Не уверен" in tool_result.text
+        registry.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_exception_falls_back_to_chat(self):
+        intent_result = IntentResult(
+            intent="create_reminder",
+            tool="remind",
+            args=IntentArgs(content="test"),
+            confidence=0.95,
+        )
+
+        mock_tool = AsyncMock()
+        mock_tool.execute.side_effect = RuntimeError("db failed")
+        registry = MagicMock()
+        registry.get.return_value = mock_tool
+
+        executor = IntentExecutor(registry=registry)
+        executor.chat_tool.execute = AsyncMock(
+            return_value=ToolResult(text="sorry", success=True)
+        )
+
+        tool_result = await executor.execute(
+            user_id=6,
+            message_text="remind me",
+            intent_result=intent_result,
+        )
+
+        assert tool_result.text == "sorry"
+        mock_tool.execute.assert_awaited_once()
+        executor.chat_tool.execute.assert_awaited_once()

@@ -1,7 +1,10 @@
+import logging
 from bot.intent.schemas import IntentArgs, IntentResult, ToolContext, ToolResult
 from bot.intent.tools.chat import ChatTool
 from bot.intent.tools.registry import ToolRegistry
 from bot.intent.validator import ValidationError, Validator
+
+logger = logging.getLogger(__name__)
 
 
 class IntentExecutor:
@@ -17,6 +20,15 @@ class IntentExecutor:
         message_text: str,
         intent_result: IntentResult,
     ) -> ToolResult:
+        # If the LLM explicitly asked for clarification, short-circuit before validation.
+        if intent_result.clarification_needed:
+            question = intent_result.clarification_question or "Не уверен, что ты имел в виду. Можешь уточнить?"
+            return ToolResult(
+                text=question,
+                success=True,
+                extra={"reason": "clarification_needed"},
+            )
+
         try:
             Validator.validate(intent_result)
         except ValidationError as exc:
@@ -48,4 +60,8 @@ class IntentExecutor:
             args=intent_result.args,
             intent_result=intent_result,
         )
-        return await tool.execute(context)
+        try:
+            return await tool.execute(context)
+        except Exception as exc:
+            logger.exception("Tool execution failed for tool=%s", intent_result.tool)
+            return await self.chat_tool.execute(context)
