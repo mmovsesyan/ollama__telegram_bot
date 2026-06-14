@@ -20,24 +20,33 @@ _INTENTS = list(typing.get_args(ALLOWED_INTENTS))
 _TOOLS = list(typing.get_args(ALLOWED_TOOLS))
 
 _SCHEMA = {
-    "intent": _INTENTS,
-    "tool": _TOOLS,
-    "args": {
-        "content": "string | null",
-        "trigger_at": "string | null",
-        "recurring": "string | null",
-        "query": "string | null",
-        "city": "string | null",
-        "url": "string | null",
-        "name": "string | null",
-        "interval": "integer | null",
-        "plan_text": "string | null",
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string", "enum": _INTENTS},
+        "tool": {"type": "string", "enum": _TOOLS},
+        "args": {
+            "type": "object",
+            "properties": {
+                "content": {"type": ["string", "null"]},
+                "trigger_at": {"type": ["string", "null"]},
+                "recurring": {"type": ["string", "null"]},
+                "query": {"type": ["string", "null"]},
+                "city": {"type": ["string", "null"]},
+                "url": {"type": ["string", "null"]},
+                "name": {"type": ["string", "null"]},
+                "interval": {"type": ["integer", "null"]},
+                "plan_text": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "clarification_needed": {"type": "boolean"},
+        "clarification_question": {"type": ["string", "null"]},
+        "proactive_suggestion": {"type": ["object", "null"], "additionalProperties": True},
+        "response_tone": {"type": "string", "enum": ["friendly", "neutral", "concise"]},
     },
-    "confidence": "float 0.0..1.0",
-    "clarification_needed": "boolean",
-    "clarification_question": "string | null",
-    "proactive_suggestion": "object | null",
-    "response_tone": "friendly | neutral | concise",
+    "required": ["intent", "tool", "args", "confidence"],
+    "additionalProperties": False,
 }
 
 _SYSTEM_PROMPT_TEMPLATE = """You are an intent router for a Telegram assistant.
@@ -52,19 +61,22 @@ Respond ONLY with a single JSON object matching this schema:
 Do not add markdown formatting, explanations, or commentary outside the JSON.
 """
 
+_STATIC_SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.format(
+    intents=json.dumps(_INTENTS, ensure_ascii=False),
+    tools=json.dumps(_TOOLS, ensure_ascii=False),
+    schema=json.dumps(_SCHEMA, indent=2, ensure_ascii=False),
+)
+
 
 class LLMIntentRouter:
     """Route a user message to an intent/tool using an LLM."""
 
     @classmethod
     def _build_system_prompt(cls, context: dict) -> str:
-        prompt = _SYSTEM_PROMPT_TEMPLATE.format(
-            intents=json.dumps(_INTENTS, ensure_ascii=False),
-            tools=json.dumps(_TOOLS, ensure_ascii=False),
-            schema=json.dumps(_SCHEMA, indent=2, ensure_ascii=False),
+        return (
+            _STATIC_SYSTEM_PROMPT
+            + f"\n\nCurrent context:\n{json.dumps(context, ensure_ascii=False, default=str)}"
         )
-        prompt += f"\n\nCurrent context:\n{json.dumps(context, ensure_ascii=False, default=str)}"
-        return prompt
 
     @classmethod
     def _extract_json(cls, text: str) -> str:
@@ -73,11 +85,35 @@ class LLMIntentRouter:
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
             text = re.sub(r"\s*```$", "", text)
-        # Extract the first JSON object if the model added extra text.
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            text = match.group(0)
-        return text.strip()
+        text = text.strip()
+
+        # Extract the first balanced {...} object, respecting string literals.
+        first_brace = text.find("{")
+        if first_brace == -1:
+            return text
+
+        depth = 0
+        in_string = False
+        escaped = False
+        for i, char in enumerate(text[first_brace:], start=first_brace):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[first_brace : i + 1].strip()
+        return text
 
     @classmethod
     def _fallback(cls, message_text: str) -> IntentResult:
