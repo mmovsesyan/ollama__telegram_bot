@@ -233,10 +233,14 @@ class LLMIntentRouter:
         m = re.search(r"\b(?:погода|weather|температура|прогноз)\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?", t)
         if m:
             city = m.group(1)
+            from bot.intent.tools.weather import _detect_days
             return IntentResult(
                 intent="weather",
                 tool="weather",
-                args=IntentArgs(city=city.capitalize() if city else None),
+                args=IntentArgs(
+                    city=city.capitalize() if city else None,
+                    days=_detect_days(message_text),
+                ),
                 confidence=0.9 if city else 0.5,
             )
 

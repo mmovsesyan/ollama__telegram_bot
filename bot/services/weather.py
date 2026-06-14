@@ -131,3 +131,158 @@ async def get_weather(city: str) -> tuple[str | None, str | None]:
         return await _get_open_meteo(city)
     except Exception as e:
         return None, str(e)[:200]
+
+
+_WMO_DESC = {
+    0: "Ясно", 1: "Преимущественно ясно", 2: "Переменная облачность", 3: "Пасмурно",
+    45: "Туман", 48: "Изморозь",
+    51: "Слабая морось", 53: "Морось", 55: "Сильная морось",
+    61: "Слабый дождь", 63: "Дождь", 65: "Сильный дождь",
+    71: "Слабый снег", 73: "Снег", 75: "Сильный снег",
+    77: "Снежная крупа",
+    80: "Кратковременный дождь", 81: "Ливень", 82: "Сильный ливень",
+    85: "Кратковременный снег", 86: "Сильный снег",
+    95: "Гроза", 96: "Гроза с градом", 99: "Сильная гроза с градом",
+}
+
+_RU_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | None]:
+    """Daily forecast for `days` days (max 16). Min/max temp, precip,
+    wind, humidity per day. Open-Meteo, no API key."""
+    days = max(1, min(days, 16))
+    async with aiohttp.ClientSession() as session:
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=ru"
+        async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            if r.status != 200:
+                return None, f"Geocoding HTTP {r.status}"
+            geo = await r.json()
+            results = geo.get("results", [])
+            if not results:
+                return None, "Город не найден"
+            loc = results[0]
+            lat, lon = loc["latitude"], loc["longitude"]
+            name = loc.get("name", city)
+            country = loc.get("country", "")
+            tz = loc.get("timezone", "auto")
+
+        url = (
+            "https://api.open-meteo.com/v1/forecast?"
+            f"latitude={lat}&longitude={lon}&forecast_days={days}&timezone={tz}"
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
+            "precipitation_sum,precipitation_probability_max,"
+            "wind_speed_10m_max,relative_humidity_2m_mean"
+        )
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status != 200:
+                return None, f"Forecast HTTP {r.status}"
+            data = await r.json()
+
+    daily = data.get("daily", {})
+    dates = daily.get("time", [])
+    if not dates:
+        return None, "Нет данных прогноза"
+
+    from datetime import date
+    header = f"📅 Прогноз погоды в {name}" + (f", {country}" if country else "") + f" на {len(dates)} {'день' if len(dates) == 1 else 'дней' if len(dates) > 4 else 'дня'}\n"
+    lines = [header]
+    for i, ds in enumerate(dates):
+        try:
+            d = date.fromisoformat(ds)
+            wd = _RU_WEEKDAYS[d.weekday()]
+            label = f"{wd} {d.day:02d}.{d.month:02d}"
+        except Exception:
+            label = ds
+        code = daily.get("weather_code", [0])[i]
+        desc = _WMO_DESC.get(code, "")
+        emoji = _weather_emoji(desc.lower())
+        tmax = daily.get("temperature_2m_max", [None])[i]
+        tmin = daily.get("temperature_2m_min", [None])[i]
+        precip = daily.get("precipitation_sum", [0])[i] or 0
+        pprob = daily.get("precipitation_probability_max", [0])[i] or 0
+        wind = daily.get("wind_speed_10m_max", [0])[i] or 0
+        hum = daily.get("relative_humidity_2m_mean", [0])[i] or 0
+        line = (
+            f"\n{emoji} {label} — {desc}\n"
+            f"  🌡 {tmin:.0f}…{tmax:.0f}°C   "
+            f"💧 {precip:.1f} мм ({pprob:.0f}%)   "
+            f"💨 {wind:.0f} км/ч   "
+            f"💦 {hum:.0f}%"
+        )
+        lines.append(line)
+    lines.append("\n\nИсточник: Open-Meteo")
+    return "".join(lines), None
+
+
+async def _forecast_wttr(city: str, days: int) -> tuple[str | None, str | None]:
+    """wttr.in fallback. Capped at 3 days — that's all the j1 endpoint
+    returns. Less detail than Open-Meteo but useful when api.open-meteo.com
+    is slow or down."""
+    days = max(1, min(days, 3))
+    async with aiohttp.ClientSession() as session:
+        url = f"https://wttr.in/{city}?format=j1"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            if resp.status != 200:
+                return None, f"HTTP {resp.status}"
+            text = await resp.text()
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                return None, "Invalid JSON"
+
+    area = data.get("nearest_area", [{}])[0]
+    name = area.get("areaName", [{}])[0].get("value", city)
+    country = area.get("country", [{}])[0].get("value", "")
+    forecast = data.get("weather", [])[:days]
+    if not forecast:
+        return None, "Нет данных прогноза"
+
+    from datetime import date
+    header = f"📅 Прогноз погоды в {name}" + (f", {country}" if country else "") + f" на {len(forecast)} {'день' if len(forecast) == 1 else 'дня'}\n"
+    lines = [header]
+    for day in forecast:
+        ds = day.get("date", "")
+        try:
+            d = date.fromisoformat(ds)
+            wd = _RU_WEEKDAYS[d.weekday()]
+            label = f"{wd} {d.day:02d}.{d.month:02d}"
+        except Exception:
+            label = ds
+        tmax = day.get("maxtempC", "?")
+        tmin = day.get("mintempC", "?")
+        hourly = day.get("hourly", [])
+        # Take noon snapshot for description and wind.
+        mid = hourly[len(hourly) // 2] if hourly else {}
+        desc = (mid.get("weatherDesc") or [{}])[0].get("value", "")
+        emoji = _weather_emoji(desc.lower())
+        wind = mid.get("windspeedKmph", "?")
+        hum = mid.get("humidity", "?")
+        precip = day.get("totalSnow_cm") or "0"
+        rain_chance = mid.get("chanceofrain", "0")
+        lines.append(
+            f"\n{emoji} {label} — {desc}\n"
+            f"  🌡 {tmin}…{tmax}°C   "
+            f"💧 шанс дождя {rain_chance}%   "
+            f"💨 {wind} км/ч   "
+            f"💦 {hum}%"
+        )
+    lines.append("\n\nИсточник: wttr.in")
+    return "".join(lines), None
+
+
+async def get_forecast(city: str, days: int = 7) -> tuple[str | None, str | None]:
+    """Multi-day forecast. Open-Meteo first (up to 16 days, detailed
+    payload), wttr.in fallback (3 days max) when Open-Meteo is slow."""
+    try:
+        text, error = await _forecast_open_meteo(city, days)
+        if text:
+            return text, None
+        last_err = error
+    except Exception as e:
+        last_err = str(e)[:200]
+        print(f"[FORECAST] Open-Meteo failed: {last_err}, trying wttr.in")
+    try:
+        return await _forecast_wttr(city, days)
+    except Exception as e:
+        return None, last_err or str(e)[:200]

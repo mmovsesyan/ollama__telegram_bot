@@ -12,6 +12,7 @@ class IntentArgs(BaseModel):
     name: str | None = None
     interval: int | None = None
     plan_text: str | None = None
+    days: int | None = None
 
 
 ALLOWED_INTENTS = Literal[
