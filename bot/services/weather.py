@@ -50,14 +50,13 @@ async def _get_wttr(city: str) -> tuple[str | None, str | None]:
             pressure = current.get("pressure", "?")
             visibility = current.get("visibility", "?")
             text = (
-                f"{emoji} Погода в {area_name}" + (f", {country}\n" if country else "\n")
-                + (f"{emoji} {desc}\n" if desc else "")
-                + f"🌡 Температура: {temp}°C (ощущается {feels}°C)\n"
-                f"💨 Ветер: {wind} km/h {wind_dir}\n"
-                f"💧 Влажность: {humidity}%\n"
-                f"📊 Давление: {pressure} мм рт. ст.\n"
-                f"👁 Видимость: {visibility} км\n\n"
-                f"Источник: wttr.in"
+                f"{emoji} {area_name}" + (f", {country}\n" if country else "\n")
+                + (f"{desc}\n" if desc else "")
+                + f"🌡 {temp}° (ощущается {feels}°)\n"
+                f"💨 {wind} км/ч{f' {wind_dir}' if wind_dir else ''}   "
+                f"💦 {humidity}%   "
+                f"📊 {pressure} мм\n"
+                f"\nИсточник: wttr.in"
             )
             return text, None
 
@@ -93,28 +92,18 @@ async def _get_open_meteo(city: str) -> tuple[str | None, str | None]:
             feels = cur.get("apparent_temperature", "?")
             humidity = cur.get("relative_humidity_2m", "?")
             wind = cur.get("wind_speed_10m", "?")
-            wind_dir = cur.get("wind_direction_10m", "")
             pressure = cur.get("pressure_msl", "?")
             code = cur.get("weather_code", 0)
-            wmo_desc = {
-                0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-                45: "Fog", 48: "Depositing rime fog",
-                51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-                61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-                71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
-                80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-                95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
-            }
-            desc = wmo_desc.get(code, "Unknown")
-            emoji = _weather_emoji(desc)
+            desc = _WMO_DESC.get(code, "")
+            emoji = _wmo_emoji(code)
             text = (
-                f"{emoji} Погода в {name}" + (f", {country}\n" if country else "\n")
-                + (f"{emoji} {desc}\n" if desc else "")
-                + f"🌡 Температура: {temp}°C (ощущается {feels}°C)\n"
-                f"💨 Ветер: {wind} km/h {wind_dir}\n"
-                f"💧 Влажность: {humidity}%\n"
-                f"📊 Давление: {pressure} гПа\n\n"
-                f"Источник: Open-Meteo"
+                f"{emoji} {name}" + (f", {country}\n" if country else "\n")
+                + (f"{desc.lower()}\n" if desc else "")
+                + f"🌡 {temp}° (ощущается {feels}°)\n"
+                f"💨 {wind} км/ч   "
+                f"💦 {humidity}%   "
+                f"📊 {pressure} гПа\n"
+                f"\nИсточник: Open-Meteo"
             )
             return text, None
 
@@ -145,7 +134,36 @@ _WMO_DESC = {
     95: "Гроза", 96: "Гроза с градом", 99: "Сильная гроза с градом",
 }
 
+
+def _wmo_emoji(code: int) -> str:
+    """Pick an emoji from a WMO weather code without relying on the
+    English-keyword matcher."""
+    if code == 0:
+        return "☀️"
+    if code in (1, 2):
+        return "⛅"
+    if code == 3:
+        return "☁️"
+    if code in (45, 48):
+        return "🌫️"
+    if code in (51, 53, 55, 61, 63, 65, 80, 81, 82):
+        return "🌧️"
+    if code in (71, 73, 75, 77, 85, 86):
+        return "❄️"
+    if code in (95, 96, 99):
+        return "⛈️"
+    return "🌡️"
+
 _RU_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _days_word(n: int) -> str:
+    """Russian plural for день/дня/дней."""
+    if n % 10 == 1 and n % 100 != 11:
+        return "день"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "дня"
+    return "дней"
 
 
 async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | None]:
@@ -185,34 +203,27 @@ async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | 
         return None, "Нет данных прогноза"
 
     from datetime import date
-    header = f"📅 Прогноз погоды в {name}" + (f", {country}" if country else "") + f" на {len(dates)} {'день' if len(dates) == 1 else 'дней' if len(dates) > 4 else 'дня'}\n"
-    lines = [header]
+    location = name + (f", {country}" if country else "")
+    lines = [f"📅 {location} — {len(dates)} {_days_word(len(dates))}", ""]
     for i, ds in enumerate(dates):
         try:
             d = date.fromisoformat(ds)
-            wd = _RU_WEEKDAYS[d.weekday()]
-            label = f"{wd} {d.day:02d}.{d.month:02d}"
+            label = f"{_RU_WEEKDAYS[d.weekday()]} {d.day:02d}.{d.month:02d}"
         except Exception:
             label = ds
         code = daily.get("weather_code", [0])[i]
         desc = _WMO_DESC.get(code, "")
-        emoji = _weather_emoji(desc.lower())
+        emoji = _wmo_emoji(code)
         tmax = daily.get("temperature_2m_max", [None])[i]
         tmin = daily.get("temperature_2m_min", [None])[i]
-        precip = daily.get("precipitation_sum", [0])[i] or 0
         pprob = daily.get("precipitation_probability_max", [0])[i] or 0
-        wind = daily.get("wind_speed_10m_max", [0])[i] or 0
-        hum = daily.get("relative_humidity_2m_mean", [0])[i] or 0
-        line = (
-            f"\n{emoji} {label} — {desc}\n"
-            f"  🌡 {tmin:.0f}…{tmax:.0f}°C   "
-            f"💧 {precip:.1f} мм ({pprob:.0f}%)   "
-            f"💨 {wind:.0f} км/ч   "
-            f"💦 {hum:.0f}%"
-        )
-        lines.append(line)
-    lines.append("\n\nИсточник: Open-Meteo")
-    return "".join(lines), None
+        # Show precipitation chance only when meaningful, otherwise drop it.
+        suffix = f" {pprob:.0f}%" if pprob >= 30 else ""
+        temp = f"{tmin:.0f}…{tmax:.0f}°" if tmin is not None and tmax is not None else "—"
+        lines.append(f"{emoji} {label}   {temp}   {desc.lower()}{suffix}")
+    lines.append("")
+    lines.append("Источник: Open-Meteo")
+    return "\n".join(lines), None
 
 
 async def _forecast_wttr(city: str, days: int) -> tuple[str | None, str | None]:
@@ -239,36 +250,30 @@ async def _forecast_wttr(city: str, days: int) -> tuple[str | None, str | None]:
         return None, "Нет данных прогноза"
 
     from datetime import date
-    header = f"📅 Прогноз погоды в {name}" + (f", {country}" if country else "") + f" на {len(forecast)} {'день' if len(forecast) == 1 else 'дня'}\n"
-    lines = [header]
+    location = name + (f", {country}" if country else "")
+    lines = [f"📅 {location} — {len(forecast)} {_days_word(len(forecast))}", ""]
     for day in forecast:
         ds = day.get("date", "")
         try:
             d = date.fromisoformat(ds)
-            wd = _RU_WEEKDAYS[d.weekday()]
-            label = f"{wd} {d.day:02d}.{d.month:02d}"
+            label = f"{_RU_WEEKDAYS[d.weekday()]} {d.day:02d}.{d.month:02d}"
         except Exception:
             label = ds
         tmax = day.get("maxtempC", "?")
         tmin = day.get("mintempC", "?")
         hourly = day.get("hourly", [])
-        # Take noon snapshot for description and wind.
         mid = hourly[len(hourly) // 2] if hourly else {}
         desc = (mid.get("weatherDesc") or [{}])[0].get("value", "")
         emoji = _weather_emoji(desc.lower())
-        wind = mid.get("windspeedKmph", "?")
-        hum = mid.get("humidity", "?")
-        precip = day.get("totalSnow_cm") or "0"
-        rain_chance = mid.get("chanceofrain", "0")
-        lines.append(
-            f"\n{emoji} {label} — {desc}\n"
-            f"  🌡 {tmin}…{tmax}°C   "
-            f"💧 шанс дождя {rain_chance}%   "
-            f"💨 {wind} км/ч   "
-            f"💦 {hum}%"
-        )
-    lines.append("\n\nИсточник: wttr.in")
-    return "".join(lines), None
+        try:
+            rain_chance = int(mid.get("chanceofrain", "0") or 0)
+        except (TypeError, ValueError):
+            rain_chance = 0
+        suffix = f" {rain_chance}%" if rain_chance >= 30 else ""
+        lines.append(f"{emoji} {label}   {tmin}…{tmax}°   {desc.lower()}{suffix}")
+    lines.append("")
+    lines.append("Источник: wttr.in")
+    return "\n".join(lines), None
 
 
 async def get_forecast(city: str, days: int = 7) -> tuple[str | None, str | None]:
