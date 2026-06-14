@@ -264,6 +264,60 @@ def parse_time(text: str) -> datetime:
     return dt
 
 
+def _extract_time_string(text: str) -> str | None:
+    """Return the substring that describes the scheduling/time part, or None."""
+    lowered = text.lower().strip()
+
+def _extract_time_string(text: str) -> str | None:
+    """Return the substring that describes the scheduling/time part, or None."""
+    lowered = text.lower().strip()
+
+    # Recurring phrases: each/every ... [day] [at HH:MM]
+    # Covers: каждый будний день в 7:30, каждый день в 9:00, по будням, по выходным, etc.
+    recurring_pattern = (
+        r'((ежедневно|каждый\s+день|every\s+day|daily)'
+        r'|(каждый\s+будний|будние|каждый\s+рабочий|weekday|по\s+будням)'
+        r'|(каждый\s+выходной|выходные|weekend|по\s+выходным)'
+        r'|(еженедельно|every\s+week|weekly|каждую\s+неделю))'
+        r'(\s+\w+)?'  # optional word like 'день'
+        r'(\s+в\s+\d{1,2}:\d{2})?'
+        r'(\s+\d{1,2}:\d{2})?'
+    )
+    m = re.search(recurring_pattern, lowered)
+    if m and m.group(0).strip():
+        matched = m.group(0).strip()
+        if len(matched) >= 5:
+            return matched
+
+    # Day-of-week patterns
+    m = re.search(r'(понедельник|вторник|среда|четверг|пятница|суббота|воскресенье|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(\s+в\s+\d{1,2}:\d{2})?', lowered)
+    if m:
+        return m.group(0)
+
+    # через N минут/часов/дней
+    m = re.search(r'через\s+\d+\s*(минут|мин|час|ч|день|дня|дней|д)?', lowered)
+    if m:
+        return m.group(0)
+
+    # сегодня/завтра в HH:MM
+    m = re.search(r'(сегодня|завтра)(\s+в\s+\d{1,2}:\d{2})?', lowered)
+    if m:
+        return m.group(0)
+
+    # bare ISO datetime
+    m = re.search(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}', lowered)
+    if m:
+        return m.group(0)
+
+    # bare HH:MM with optional в/утра/дня
+    if re.search(r'(в\s+\d{1,2}:\d{2}|\d{1,2}:\d{2}\s*(утра|дня|вечера|ночи))', lowered):
+        m = re.search(r'(в\s+)?\d{1,2}:\d{2}\s*(утра|дня|вечера|ночи)?', lowered)
+        if m:
+            return m.group(0)
+
+    return None
+
+
 def parse_reminder(text: str) -> tuple[datetime, str | None]:
     """Parse reminder time. Returns (datetime, recurrence_pattern).
     recurrence_pattern: daily, weekday, weekend, weekly, monday..sunday, or None."""
@@ -305,7 +359,7 @@ def parse_reminder(text: str) -> tuple[datetime, str | None]:
                 target += timedelta(days=1)
         return target, recurrence
 
-    if re.search(r'каждый\s+выходной|выходные|weekend', text):
+    if re.search(r'каждый\s+выходной|выходные|weekend|по\s+выходным', text):
         recurrence = "weekend"
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if target <= now or target.weekday() < 5:
@@ -468,21 +522,9 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
         return
 
     trigger_at, recurring = parse_reminder(text)
-
-    time_patterns = [
-        r"^(через \d+ (?:минут|час|день|дней|дня))",
-        r"^(завтра в \d{1,2}:\d{2})",
-        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})",
-        r"^(\d{2}:\d{2})",
-    ]
-
-    content = text
-    for pattern in time_patterns:
-        match = re.match(pattern, text, flags=re.IGNORECASE)
-        if match:
-            time_str = match.group(1)
-            content = text[len(time_str):].strip()
-            break
+    time_str = _extract_time_string(text)
+    content = text.replace(time_str, "").strip() if time_str else text
+    content = re.sub(r"\s+", " ", content).strip(",. ")
 
     if not trigger_at:
         trigger_at = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -515,22 +557,9 @@ async def _process_task_from_text(user_id: int, text: str):
         return
 
     trigger_at, recurring = parse_reminder(text)
-
-    time_patterns = [
-        r"^(через \d+ (?:минут|час|день|дней|дня))",
-        r"^(завтра в \d{1,2}:\d{2})",
-        r"^(сегодня в \d{1,2}:\d{2})",
-        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})",
-        r"^(\d{1,2}:\d{2})",
-    ]
-
-    content = text
-    for pattern in time_patterns:
-        match = re.match(pattern, text, flags=re.IGNORECASE)
-        if match:
-            time_str = match.group(1)
-            content = text[len(time_str):].strip()
-            break
+    time_str = _extract_time_string(text)
+    content = text.replace(time_str, "").strip() if time_str else text
+    content = re.sub(r"\s+", " ", content).strip(",. ")
 
     if not trigger_at:
         trigger_at = datetime.now(timezone.utc) + timedelta(minutes=5)
