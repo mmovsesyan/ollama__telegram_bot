@@ -56,6 +56,76 @@ def _looks_skippable(user_text: str, assistant_text: str) -> bool:
     return False
 
 
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_STOPWORDS = frozenset({
+    "и", "в", "на", "по", "с", "у", "о", "об", "за", "из", "для", "к", "до",
+    "от", "что", "как", "это", "тот", "эта", "его", "её", "the", "a", "an",
+    "of", "to", "in", "on", "at", "for", "is", "are",
+})
+
+
+def _stem(tok: str) -> str:
+    """Crude RU/EN stemmer: chop trailing inflection so 'погоду' / 'погода' /
+    'погоды' all collapse to 'погод'. Not linguistically perfect but good
+    enough for paraphrase detection without pymorphy2."""
+    if len(tok) <= 4:
+        return tok
+    # Common Russian endings (longest first) + a couple of English ones.
+    for suf in ("ятся", "иться", "ться", "ются", "ями", "ями", "ого", "его",
+                "ему", "ому", "ыми", "ими", "ее", "ой", "ый", "ий", "ая", "яя",
+                "ое", "ие", "ые", "ам", "ям", "ах", "ях", "ом", "ем", "ой", "ей",
+                "у", "ю", "а", "я", "ы", "и", "е", "о", "ь",
+                "ing", "ed", "es", "s"):
+        if tok.endswith(suf) and len(tok) - len(suf) >= 3:
+            return tok[:-len(suf)]
+    return tok
+
+
+def _tokenize(s: str) -> set[str]:
+    return {_stem(t) for t in _TOKEN_RE.findall(s.lower())
+            if t not in _STOPWORDS and len(t) > 2}
+
+
+def _is_near_duplicate(content: str, others: list[str]) -> bool:
+    """True if `content` shares enough meaningful stemmed tokens with any
+    item in `others` to count as a paraphrase. Catches cases like
+    'погода в Москве в 7:30' vs 'ежедневная задача: погода в Москве в 7:30'.
+
+    Heuristic: ≥60% overlap on the smaller token set, AND no high-signal
+    proper-noun/number disagreement (so 'погода в Москве' != 'погода в Питере')."""
+    a = _tokenize(content)
+    if not a:
+        return False
+    a_signals = _signal_tokens(content)
+    for other in others:
+        b = _tokenize(other)
+        if not b:
+            continue
+        smaller = a if len(a) <= len(b) else b
+        overlap = len(a & b) / max(1, len(smaller))
+        if overlap < 0.6:
+            continue
+        # Block dedup when each side has a signal token (proper noun,
+        # number) absent from the other — different cities, dates, or
+        # entities should never collapse.
+        b_signals = _signal_tokens(other)
+        if (a_signals - b_signals) and (b_signals - a_signals):
+            continue
+        return True
+    return False
+
+
+_SIGNAL_RE = re.compile(r"(?<=[a-zа-яё\s,;:—-])\b([A-ZА-ЯЁ][a-zа-яё]{2,}|\d+[:.\d]*)\b")
+
+
+def _signal_tokens(s: str) -> set[str]:
+    """Mid-sentence capitalized words and numbers — high-signal tokens
+    that should block dedup when they differ (e.g. 'Москве' vs 'Питере',
+    '7:30' vs '9:00'). Sentence-initial capitals are ignored — they're
+    just grammar, not entity markers."""
+    return {m.group(1).lower() for m in _SIGNAL_RE.finditer(s)}
+
+
 def _parse_facts(raw: str) -> list[tuple[str, str]]:
     """Parse LLM output of `[category] content` lines.
 
@@ -100,16 +170,24 @@ async def extract_facts_from_exchange(
         convo = convo[:_MAX_EXTRACT_INPUT]
 
     prompt = (
-        "Проанализируй короткий обмен сообщениями и извлеки 0-3 ВАЖНЫХ факта "
-        "о пользователе или его намерениях. Только то, что полезно помнить "
-        "для будущих разговоров. Игнорируй болтовню, погоду, мелочи.\n\n"
+        "Извлеки 0-3 ВАЖНЫХ факта о пользователе из обмена. Сохраняем только то, "
+        "что полезно знать через недели/месяцы.\n\n"
         "Категории:\n"
-        "- fact: факт о пользователе, проекте, мире\n"
-        "- preference: предпочтение, вкус, правило\n"
-        "- note: заметка, идея, задача\n\n"
-        "Формат ответа (одна строка на факт):\n"
+        "- fact: устойчивый факт о пользователе (имя, профессия, образование, "
+        "город, владение языками, навыки)\n"
+        "- preference: устойчивое предпочтение (формат ответов, стиль, любимые темы)\n"
+        "- note: заметка, которую пользователь явно попросил сохранить\n\n"
+        "НЕ СОХРАНЯЙ:\n"
+        "- Намерения и разовые запросы («хочу найти X», «покажи Y», «ищет книги»)\n"
+        "- Напоминания и задачи (они уже в отдельных таблицах: «напомни», "
+        "«каждое утро в 9», «по будням в 7:30»)\n"
+        "- Действия пользователя в чате («загрузил файл», «отправил фото», "
+        "«нажал кнопку», «попросил проанализировать»)\n"
+        "- Болтовню, погоду, новости, ответы ассистента\n"
+        "- Дубликаты и переформулировки одного и того же факта\n\n"
+        "Формат (одна строка на факт):\n"
         "[category] content\n"
-        "Если фактов нет — ответь: НЕТ\n\n"
+        "Если ничего достойного — ответь: НЕТ\n\n"
         f"ДИАЛОГ:\n{convo}\n\n"
         "ФАКТЫ:"
     )
@@ -141,14 +219,18 @@ async def extract_facts_from_exchange(
         existing = db.get_memories(user_id)
     except Exception:
         existing = []
-    seen = {(m.get("content") or "").lower().strip() for m in existing}
+    existing_contents = [(m.get("content") or "") for m in existing]
+    saved_contents: list[str] = []
     saved = 0
     for cat, content in facts[:3]:
-        if content.lower().strip() in seen:
+        if _is_near_duplicate(content, existing_contents):
+            continue
+        if _is_near_duplicate(content, saved_contents):
             continue
         try:
             db.add_memory(user_id, cat, content, source="auto-extract")
             saved += 1
+            saved_contents.append(content)
         except Exception as e:
             logger.warning("[KB EXTRACT] add_memory failed: %s", e)
     if saved:
