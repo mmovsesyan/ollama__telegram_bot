@@ -42,3 +42,6 @@ bot.log
 # OS
 Thumbs.db
 .gstack/
+
+# Internal plans & specs (kept locally, not published)
+docs/superpowers/
