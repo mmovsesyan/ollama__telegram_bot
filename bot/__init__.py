@@ -15,6 +15,7 @@ COMMANDS = [
     BotCommand(command="start", description="Приветствие и меню"),
     BotCommand(command="help", description="Примеры и команды"),
     BotCommand(command="remind", description="Добавить напоминание"),
+    BotCommand(command="task", description="Задача (AI выполнит)"),
     BotCommand(command="reminders", description="Список напоминаний"),
     BotCommand(command="memory", description="Показать память"),
     BotCommand(command="memory_add", description="Добавить факт в память"),

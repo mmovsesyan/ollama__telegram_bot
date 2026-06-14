@@ -10,8 +10,8 @@ import os
 import tempfile
 
 from bot.bot import bot as aiogram_bot
-from bot.keyboards.inline import answer_keyboard, reminder_quick_keyboard, memory_category_keyboard, recurring_suggest_keyboard
-from bot.keyboards.reply import command_keyboard, cancel_keyboard, fsm_keyboard
+from bot.keyboards.inline import answer_keyboard
+from bot.keyboards.reply import command_keyboard, cancel_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
@@ -34,7 +34,6 @@ router = Router()
 
 db = None  # injected in __init__
 
-# Optional faster-whisper import; voice support degrades gracefully if missing.
 try:
     from faster_whisper import WhisperModel
     _WHISPER_AVAILABLE = True
@@ -43,6 +42,7 @@ except Exception:
     _WHISPER_AVAILABLE = False
 
 _whisper_model_instance: Any | None = None
+
 
 def _get_whisper_model() -> Any:
     global _whisper_model_instance
@@ -63,14 +63,17 @@ def _is_allowed(user_id: int) -> bool:
     allowed = {int(x.strip()) for x in ALLOWED_CHAT_IDS.split(",") if x.strip().isdigit()}
     return user_id in allowed
 
+
 def _escape_markdown(text: str) -> str:
     chars = r"_[]()~`>#+-=|{}.!"
     for ch in chars:
         text = text.replace(ch, "\\" + ch)
     return text
 
+
 def wrap(s: str, w: int) -> list[str]:
     return [s[i : i + w] for i in range(0, len(s), w)]
+
 
 class UserChat(BaseModel):
     ollama_chat: OllamaChat
@@ -80,6 +83,7 @@ class UserChat(BaseModel):
     session_id: int | None = None
     last_active: float = 0
 
+
 chats: dict[int, UserChat] = {}
 _typing_last: dict[int, float] = {}
 _request_last: dict[int, float] = {}
@@ -87,16 +91,16 @@ _generating: set[int] = set()
 
 import time
 
+
 async def _cleanup_old_chats():
-    """Remove chat sessions idle for > 2 hours to prevent memory leak."""
     now = time.time()
     stale = [uid for uid, chat in chats.items() if chat.last_active < now - 7200]
     for uid in stale:
         _delete_chat(uid)
         print(f"[CLEANUP] Removed idle session for user {uid}")
 
+
 async def _safe_typing(user_id: int):
-    import time
     now = time.time()
     if user_id in _typing_last and now - _typing_last[user_id] < 3:
         return
@@ -109,19 +113,24 @@ async def _safe_typing(user_id: int):
         else:
             print(f"[TYPING] Error: {e}")
 
+
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token on average."""
     return max(1, len(text) // 4)
 
-# Map new simplified reply buttons to commands/intents.
+
 BUTTON_MAP = {
-    "💬 Чат": None,          # just talk to AI
+    "💬 Чат": None,
     "🔍 Поиск": "/search",
-    "⏰ Напоминание": "/remind",
+    "🌤 Погода": "/weather",
+    "⏰ Напомнить": "/remind",
+    "📋 Задача": "/task",
+    "📝 Заметка": "/note",
     "🧠 Память": "/memory",
+    "📊 Отчёт": "/report",
     "❓ Помощь": "/help",
     "🗑 Очистить": "/clear",
 }
+
 
 async def generate(message: Message, user_id: int, text: str):
     now = time.time()
@@ -135,10 +144,7 @@ async def generate(message: Message, user_id: int, text: str):
         return
     _generating.add(user_id)
 
-    # Free-form text reaches the LLM normally.
-
-    created = _create_chat(user_id)
-
+    _create_chat(user_id)
     chat = chats[user_id]
 
     try:
@@ -152,7 +158,6 @@ async def generate(message: Message, user_id: int, text: str):
         pass
 
     chat.linked_last_messages = None
-
     await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
 
     chat.last_active = time.time()
@@ -229,9 +234,9 @@ async def generate(message: Message, user_id: int, text: str):
     if db and chat.session_id:
         db.save_message(user_id, chat.session_id, "assistant", assistant_content, chat.selected_model)
 
-    # Async compaction after response is sent
     if db and chat.session_id:
         asyncio.create_task(_maybe_compact(user_id, chat))
+
 
 def _trim_context(chat: UserChat) -> None:
     MAX_CONTEXT_TOKENS = 4000
@@ -240,7 +245,6 @@ def _trim_context(chat: UserChat) -> None:
 
     total_tokens = sum(_estimate_tokens(m.content) for m in system_messages)
     kept: list[OllamaChatMessage] = []
-    # Keep newest messages first, then prepend older ones while under token budget
     for m in reversed(other_messages):
         tokens = _estimate_tokens(m.content)
         if total_tokens + tokens > MAX_CONTEXT_TOKENS and kept:
@@ -255,21 +259,18 @@ async def _maybe_compact(user_id: int, chat: UserChat):
     if not db or not chat.session_id:
         return
 
-    # Count only user+assistant messages (excluding system and summaries)
     non_system = [m for m in chat.ollama_chat.messages if m.role in ("user", "assistant")]
     total_count = len(non_system)
 
     if total_count < COMPACTION_EVERY_N:
         return
 
-    # Check if we already compacted at this count or higher
     latest_summary = db.get_latest_summary(chat.session_id)
     if latest_summary and latest_summary.get("message_count", 0) >= total_count:
         return
 
     print(f"[COMPACT] Triggered for user {user_id} at {total_count} messages")
 
-    # Build conversation text for summarization
     conversation_lines = []
     for m in non_system:
         role_label = "Пользователь" if m.role == "user" else "Ассистент"
@@ -308,10 +309,9 @@ async def _maybe_compact(user_id: int, chat: UserChat):
         db.add_summary(chat.session_id, total_count, summary_content)
         print(f"[COMPACT] Saved summary for session {chat.session_id} at {total_count} messages")
 
-        # --- Auto memory extraction (OpenClaude-style) ---
         memory_prompt = (
             "Проанализируй диалог и извлеки ВАЖНЫЕ факты о пользователе.\n"
-            "Для каждого факта укажи категорию: fact (факт), preference (предпочтение), task (задача), decision (решение).\n"
+            "Для каждого факта укажи категорию: fact (факт), preference (предпочтение), note (заметка).\n"
             "Ответь ТОЛЬКО в формате (один факт на строку):\n"
             "[category] content\n"
             "Если нет важных фактов — напиши \"НЕТ\".\n\n"
@@ -341,13 +341,11 @@ async def _maybe_compact(user_id: int, chat: UserChat):
                     line = line.strip()
                     if not line or line.upper() == "НЕТ":
                         continue
-                    # Parse [category] content
                     if line.startswith("[") and "]" in line:
                         close_idx = line.index("]")
                         category = line[1:close_idx].lower().strip()
                         content = line[close_idx+1:].strip()
-                        if category in ("fact", "preference", "task", "decision") and content:
-                            # Check for duplicates
+                        if category in ("fact", "preference", "note") and content:
                             existing = db.get_memories(user_id, category)
                             dup = any(m.get('content','').lower() == content.lower() for m in existing)
                             if not dup:
@@ -356,15 +354,12 @@ async def _maybe_compact(user_id: int, chat: UserChat):
         except Exception as mem_err:
             print(f"[MEMORY] Extraction failed: {mem_err}")
 
-        # Rebuild chat context: base system + fresh summary + last 2 pairs
-        # Keep only the first system message (SYSTEM_MESSAGE + notes + memories);
-        # drop old summary messages to avoid accumulation.
         base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][:1]
         summary_msg = OllamaChatMessage(
             role="system",
             content=f"[Контекст предыдущего диалога]: {summary_content}"
         )
-        last_pairs = non_system[-4:]  # keep last 2 user + 2 assistant (or less)
+        last_pairs = non_system[-4:]
 
         chat.ollama_chat.messages = base_system_msgs + [summary_msg] + [
             OllamaChatMessage(role=m.role, content=m.content) for m in last_pairs
@@ -378,6 +373,7 @@ def _delete_chat(user_id: int) -> None:
     if user_id not in chats:
         return
     del chats[user_id]
+
 
 def _create_chat(user_id: int) -> bool:
     if user_id in chats:
@@ -403,7 +399,6 @@ def _create_chat(user_id: int) -> bool:
         if notes:
             system_content += f"\n\nКонтекст о пользователе:\n{notes}"
 
-        # Load structured memories
         memories = db.get_memories(user_id)
         if memories:
             memory_lines = []
@@ -418,7 +413,6 @@ def _create_chat(user_id: int) -> bool:
             OllamaChatMessage(role="system", content=system_content)
         )
 
-    # Load latest summary as additional context
     if db and session_id:
         latest_summary = db.get_latest_summary(session_id)
         if latest_summary and latest_summary.get("summary"):
@@ -440,6 +434,7 @@ def _create_chat(user_id: int) -> bool:
         )
     return True
 
+
 @router.message(Command("models"))
 @router.message(lambda m: m.text and m.text == "/models")
 @router.message(F.text == "🤖 Модели")
@@ -451,7 +446,7 @@ async def cmd_models(message: Message):
         return
     models = await get_installed_models()
     model_list = "\n".join([f"- {m.name}" for m in models]) or "Нет моделей"
-    await message.answer(f"Доступные модели:\n{model_list}")
+    await message.answer(f"Доступные модели:\n{model_list}", reply_markup=command_keyboard)
 
 
 @router.message(Command("help"))
@@ -464,25 +459,38 @@ async def cmd_help(message: Message):
         print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
         return
     await message.answer(
-        "🤖 Просто напиши или скажи голосом, что нужно:\n\n"
-        "🌤 Погода:\n"
+        "🤖 Вот что я умею:\n\n"
+        "🌤 *Погода*\n"
         "• «погода в Москве»\n\n"
-        "⏰ Напоминания:\n"
+        "⏰ *Напоминания*\n"
         "• «напомни через 5 минут позвонить»\n"
         "• «завтра в 9:00 проверить отчёт»\n"
         "• «каждое утро в 9 покажи новости»\n\n"
-        "📝 Заметки и память:\n"
-        "• «запомни, я люблю краткие ответы»\n"
+        "📋 *Задачи (AI выполнит сам)*\n"
+        "• «задача каждый день в 7:00 погода в Москве»\n"
+        "• «задача через час поищи новости Tesla»\n\n"
+        "📝 *Заметки*\n"
         "• «заметка: купить акции TSLA»\n\n"
-        "🔍 Поиск и новости:\n"
+        "🧠 *Память*\n"
+        "• «запомни, я люблю краткие ответы»\n"
+        "• «факт: я работаю над проектом X»\n\n"
+        "🔍 *Поиск и новости*\n"
         "• «поищи последние новости Tesla»\n"
         "• «новости»\n\n"
-        "💬 AI-чат:\n"
+        "💬 *AI-чат*\n"
         "• просто напиши вопрос — бот ответит через Ollama\n\n"
-        "📋 Команды:\n"
-        "/start — меню, /models — модели, /model <name> — сменить модель\n"
-        "/clear — очистить историю, /memory — показать память\n"
-        "/reminders — напоминания, /monitors — мониторы, /report — отчёт",
+        "📋 *Команды:*\n"
+        "/start — меню\n"
+        "/remind — напоминание\n"
+        "/task — задача\n"
+        "/note — заметка\n"
+        "/memory — память\n"
+        "/models — модели\n"
+        "/model — сменить модель\n"
+        "/clear — очистить историю\n"
+        "/monitors — мониторы",
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
     )
 
 
@@ -498,18 +506,19 @@ async def cmd_model(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "Введите название модели:\n"
+            "Введи название модели:\n"
             "Пример: llama2:13b-chat",
+            reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_model)
         return
     model_to_set = parts[1].strip()
     if not await model_is_installed(model_to_set):
-        await message.answer(f"Модель {model_to_set} не найдена!")
+        await message.answer(f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard)
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(f"Модель изменена на {model_to_set}")
+    await message.answer(f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard)
 
 
 @router.message(BotStates.waiting_model)
@@ -528,20 +537,20 @@ async def process_model_state(message: Message, state: FSMContext):
     text = message.text or ""
     if text == "❌ Отмена":
         await state.clear()
-        await message.answer("Действие отменено.", reply_markup=ReplyKeyboardRemove())
+        await message.answer("Действие отменено.", reply_markup=command_keyboard)
         return
     if text.startswith("/") or text in BUTTON_MAP:
         await state.clear()
-        await message.answer("Текущее действие отменено.", reply_markup=ReplyKeyboardRemove())
+        await message.answer("Текущее действие отменено.", reply_markup=command_keyboard)
         return
     model_to_set = text.strip()
     if not await model_is_installed(model_to_set):
-        await message.answer(f"Модель {model_to_set} не найдена!", reply_markup=cancel_keyboard)
+        await message.answer(f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard)
         await state.clear()
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(f"Модель изменена на {model_to_set}", reply_markup=cancel_keyboard)
+    await message.answer(f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard)
     await state.clear()
 
 
@@ -558,7 +567,7 @@ async def cmd_clear(message: Message):
     if user_id in chats and chats[user_id].session_id and db:
         db.close_session(chats[user_id].session_id, "User cleared chat")
     _delete_chat(user_id)
-    await message.answer("История очищена.")
+    await message.answer("✅ История очищена.", reply_markup=command_keyboard)
 
 
 @router.message(F.text == "💬 Чат")
@@ -600,6 +609,7 @@ async def like(callback: CallbackQuery):
     chat.linked_last_messages = None
     await callback.answer("👍")
 
+
 @router.callback_query(F.data == "dislike")
 async def dislike(callback: CallbackQuery):
     if not callback.from_user:
@@ -627,6 +637,7 @@ async def dislike(callback: CallbackQuery):
     await generate(callback.message, user_id, chat.previous_prompt)
     await callback.answer("Перегенерация...")
 
+
 async def _download_document(document):
     file = await aiogram_bot.get_file(document.file_id)
     suffix = os.path.splitext(document.file_name or "")[1] or ".bin"
@@ -634,6 +645,7 @@ async def _download_document(document):
         tmp_path = tmp.name
     await aiogram_bot.download_file(file.file_path, tmp_path)
     return tmp_path, document.file_name or "file", suffix.lower()
+
 
 def _extract_text_from_file(file_path: str, suffix: str) -> str:
     if suffix == ".pdf":
@@ -657,7 +669,7 @@ def _extract_text_from_file(file_path: str, suffix: str) -> str:
         try:
             data = json.loads(content)
             return json.dumps(data, ensure_ascii=False, indent=2)
-        except:
+        except Exception:
             return content
     elif suffix in (".csv", ".tsv"):
         with open(file_path, "r", encoding="utf-8") as f:
@@ -681,6 +693,7 @@ def _extract_text_from_file(file_path: str, suffix: str) -> str:
         except Exception:
             return f"[Unsupported or binary file type: {suffix}]"
 
+
 @router.message(F.document)
 async def handle_document(message: Message, state: FSMContext):
     if message.from_user is None:
@@ -699,14 +712,14 @@ async def handle_document(message: Message, state: FSMContext):
         tmp_path, fname, suffix = await _download_document(document)
         text = _extract_text_from_file(tmp_path, suffix)
     except Exception as e:
-        await message.answer(f"❌ Ошибка обработки файла: {str(e)[:200]}")
+        await message.answer(f"❌ Ошибка обработки файла: {str(e)[:200]}", reply_markup=command_keyboard)
         return
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
     if not text or not text.strip():
-        await message.answer("❌ Не удалось извлечь текст из файла.")
+        await message.answer("❌ Не удалось извлечь текст из файла.", reply_markup=command_keyboard)
         return
 
     max_chars = 12000
@@ -719,7 +732,6 @@ async def handle_document(message: Message, state: FSMContext):
 
 
 async def _download_tg_file(file_id: str, suffix: str) -> tuple[str, str]:
-    """Download a Telegram file to a temporary file and return (path, file_path)."""
     tg_file = await aiogram_bot.get_file(file_id)
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp_path = tmp.name
@@ -728,14 +740,12 @@ async def _download_tg_file(file_id: str, suffix: str) -> tuple[str, str]:
 
 
 async def _transcribe_audio(file_path: str) -> str:
-    """Transcribe an audio file using faster-whisper."""
     model = _get_whisper_model()
     segments, _info = model.transcribe(file_path, beam_size=5, vad_filter=True)
     return " ".join(segment.text for segment in segments).strip()
 
 
 async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: str, suffix: str, label: str):
-    """Download and transcribe a voice/audio message, then route text to the chat flow."""
     if message.from_user is None:
         return
     user_id = message.from_user.id
@@ -745,7 +755,8 @@ async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: s
     if not _WHISPER_AVAILABLE:
         await message.answer(
             "🎤 Распознавание голоса недоступно. Установи faster-whisper:\n"
-            "poetry install --no-dev"
+            "poetry install --no-dev",
+            reply_markup=command_keyboard,
         )
         return
 
@@ -775,7 +786,6 @@ async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: s
         return
 
     await status_msg.edit_text(f"🎤 Распознано: {text}")
-    # Route transcribed text through the normal text flow
     await answer(message, state, override_text=text)
 
 
@@ -792,77 +802,61 @@ async def handle_audio(message: Message, state: FSMContext):
     audio = message.audio
     if audio is None:
         return
-    # Best guess suffix; faster-whisper/ffmpeg will detect format anyway.
     suffix = ".mp3" if (audio.file_name or "").lower().endswith(".mp3") else ".audio"
     await _handle_voice_or_audio(message, state, audio.file_id, suffix, "аудио")
 
 
 def _detect_intent(text: str) -> tuple[str | None, str | None]:
-    """Detect user intent from natural language. Returns (intent, extracted_arg)."""
     import re
     t = text.lower().strip()
 
-    # --- remind ---
     if re.search(r"напомни|напомнить|добавь напоминание|добавить напоминание|напомни мне", t):
         return "remind", text
 
-    # --- weather ---
+    if re.search(r"^\s*задача\b|добавь задачу|создай задачу|запланируй задачу", t):
+        return "task", re.sub(r"^\s*задача\b", "", text, flags=re.IGNORECASE).strip()
+
     m = re.search(r"(?:погода|погоду|weather|температура)(?:\s+(?:в|for|in|для))?\s+([a-zа-яё\-]+)", t)
     if m:
         return "weather", m.group(1).capitalize()
     if re.search(r"^погода$|^погоду$|^weather$", t):
         return "weather", None
 
-    # --- search ---
     m = re.search(r"(?:поищи|найди|загугли|погугли|ищи|search|google)\s+(.+)", t)
     if m:
         return "search", m.group(1).strip()
 
-    # --- news ---
     if re.search(r"новости|последние новости|news", t):
         return "news", None
 
-    # --- memory add ---
-    m = re.search(r"(?:запомни|добавь факт|запиши что|запомни что)\s+(.+)", t)
-    if m:
-        return "memory_add", m.group(1).strip()
+    if re.search(r"^\s*заметка\b|сделай заметку|добавь заметку|запиши заметку", t):
+        return "note", re.sub(r"^\s*заметка\b", "", text, flags=re.IGNORECASE).strip()
 
-    # --- memory show ---
+    if re.search(r"запомни|добавь факт|запиши что|запомни что|факт:", t):
+        return "memory_add", re.sub(r"^\s*(?:запомни|добавь факт|запиши что|запомни что|факт:)\s*", "", text, flags=re.IGNORECASE).strip()
+
     if re.search(r"моя память|что ты помнишь|покажи память|мои факты|покажи факты", t):
         return "memory_show", None
 
-    # --- note ---
-    m = re.search(r"(?:заметка|запиши заметку|сделай заметку)\s+(.+)", t)
-    if m:
-        return "note", m.group(1).strip()
+    if re.search(r"(?:добавь монитор|монитор|следи за)\s+(.+)", t):
+        return "monitor_add", m.group(1).strip() if (m := re.search(r"(?:добавь монитор|монитор|следи за)\s+(.+)", t)) else ""
 
-    # --- monitor add ---
-    m = re.search(r"(?:добавь монитор|монитор|следи за)\s+(.+)", t)
-    if m:
-        return "monitor_add", m.group(1).strip()
-
-    # --- monitor show ---
     if re.search(r"мониторы|покажи мониторы|список мониторов", t):
         return "monitor_show", None
 
-    # --- report ---
     if re.search(r"отч[её]т|report|ежедневный отч[её]т", t):
         return "report", None
 
-    # --- help ---
     if re.search(r"помощь|help|справка|команды", t):
         return "help", None
 
-    # --- models ---
     if re.search(r"модели|список моделей|models", t):
         return "models", None
 
-    # --- model switch ---
     m = re.search(r"(?:смени модель|поменяй модель|выбери модель)\s+(.+)", t)
     if m:
         return "model", m.group(1).strip()
 
-    # --- clear ---
     if re.search(r"очисти|сбрось|clear chat|очистить историю", t):
         return "clear", None
 
@@ -878,37 +872,79 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
         return
     text = override_text if override_text is not None else message.text
     if text is None:
-        await message.answer("Я работаю только с текстом. Напишите сообщение или используйте кнопки.")
+        await message.answer("Я работаю только с текстом. Напиши сообщение или используй кнопки.", reply_markup=command_keyboard)
         return
 
-    # Handle cancel button globally
     if text == "❌ Отмена":
         current_state = await state.get_state()
         if current_state is not None:
             await state.clear()
-            await message.answer("Действие отменено.")
+            await message.answer("Действие отменено.", reply_markup=command_keyboard)
         else:
-            await message.answer("Нет активного действия для отмены.")
+            await message.answer("Нет активного действия для отмены.", reply_markup=command_keyboard)
         return
 
-    # --- Natural language intent routing ---
+    if text in BUTTON_MAP:
+        mapped = BUTTON_MAP[text]
+        if mapped is None:
+            await message.answer(
+                "💬 Просто напиши или скажи голосом, что нужно.",
+                reply_markup=command_keyboard,
+            )
+            return
+        from copy import copy
+        mapped_msg = copy(message)
+        mapped_msg.text = mapped
+        # Dispatch via router chain: cron handlers have priority, so we just re-process.
+        # Simpler: forward to aiogram dispatcher's message handlers by manually invoking cron flow.
+        if mapped == "/weather":
+            await message.answer("🌤 Введи название города:", reply_markup=cancel_keyboard)
+            await state.set_state(BotStates.waiting_weather)
+        elif mapped == "/search":
+            await message.answer("🔍 Введи поисковый запрос:", reply_markup=cancel_keyboard)
+            await state.set_state(BotStates.waiting_search)
+        elif mapped == "/remind":
+            await message.answer("⏰ Чего напомнить?", reply_markup=cancel_keyboard)
+            await state.set_state(BotStates.waiting_remind)
+        elif mapped == "/task":
+            await message.answer(
+                "📋 Какую задачу выполнить? Я сам выполню её в указанное время.",
+                reply_markup=cancel_keyboard,
+            )
+            await state.set_state(BotStates.waiting_task_text)
+        elif mapped == "/note":
+            await message.answer("📝 Что записать?", reply_markup=cancel_keyboard)
+            await state.set_state(BotStates.waiting_note)
+        elif mapped == "/memory":
+            from bot.routers.cron import cmd_memory
+            await cmd_memory(message)
+        elif mapped == "/report":
+            from bot.routers.cron import cmd_report
+            await cmd_report(message)
+        elif mapped == "/help":
+            await cmd_help(message)
+        elif mapped == "/clear":
+            await cmd_clear(message)
+        return
+
     try:
         intent, arg = _detect_intent(text)
         if intent and not text.startswith("/"):
-            # Map intent to direct function calls from cron router
             if intent == "weather":
                 if arg:
                     from bot.routers.cron import _process_weather
                     await _process_weather(message, arg)
                 else:
-                    await message.answer("🌤 Какой город?")
+                    await message.answer("🌤 Какой город?", reply_markup=cancel_keyboard)
+                    await state.set_state(BotStates.waiting_weather)
                 return
             if intent == "search":
                 if arg:
                     from bot.routers.cron import _process_search
                     await _process_search(message, arg)
                 else:
-                    await message.answer("🔍 Что искать?")
+                    await message.answer("🔍 Что искать?", reply_markup=cancel_keyboard)
+                    await state.set_state(BotStates.waiting_search)
                 return
             if intent == "news":
                 from bot.routers.cron import cmd_news
@@ -917,6 +953,10 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
             if intent == "remind":
                 from bot.routers.cron import _process_remind
                 await _process_remind(user_id, text)
+                return
+            if intent == "task":
+                from bot.routers.cron import _process_task_from_text
+                await _process_task_from_text(user_id, arg or text)
                 return
             if intent == "memory_show":
                 from bot.routers.cron import cmd_memory
@@ -933,32 +973,38 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
             if intent == "note":
                 if arg and db:
                     db.add_note(user_id, arg)
-                    await message.answer("Заметка сохранена.")
+                    await message.answer(
+                        f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {arg}",
+                        reply_markup=command_keyboard,
+                    )
                 else:
-                    await state.set_state(BotStates.waiting_note)
                     await message.answer("📝 Что записать?", reply_markup=cancel_keyboard)
+                    await state.set_state(BotStates.waiting_note)
                 return
             if intent == "memory_add":
                 if arg and db:
-                    parts = arg.split(maxsplit=1)
-                    cat = parts[0].lower() if len(parts) > 1 else "fact"
-                    content = parts[1] if len(parts) > 1 else arg
-                    if cat not in ("fact", "preference", "task", "decision"):
-                        cat = "fact"
-                        content = arg
-                    mid = db.add_memory(user_id, cat, content)
-                    await message.answer(f"✅ Факт #{mid} сохранён: [{cat}] {content}")
+                    from bot.routers.cron import _classify_memory
+                    category = await _classify_memory(arg)
+                    mid = db.add_memory(user_id, category, arg)
+                    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+                    await message.answer(
+                        f"✅ Сохранено: {cat_names.get(category, category)}\n#{mid} | {arg}",
+                        reply_markup=command_keyboard,
+                    )
                 else:
+                    await message.answer(
+                        "🧠 Что запомнить? Я определю категорию автоматически.",
+                        reply_markup=cancel_keyboard,
+                    )
                     await state.set_state(BotStates.waiting_memory_add)
-                    await state.update_data(memory_category="fact")
-                    await message.answer("🧠 Что запомнить?", reply_markup=cancel_keyboard)
+                    await state.update_data(memory_category="auto")
                 return
             if intent == "monitor_add":
-                await state.set_state(BotStates.waiting_monitor_add)
                 await message.answer(
-                    "🔍 Введите данные монитора:\n<имя> <url> [интервал]\nПример: Google google.com 5m",
+                    "🔍 Введи данные монитора:\n<имя> <url> [интервал]\nПример: Google google.com 5m",
                     reply_markup=cancel_keyboard,
                 )
+                await state.set_state(BotStates.waiting_monitor_add)
                 return
             if intent == "models":
                 await cmd_models(message)
@@ -970,8 +1016,8 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
                     model_msg.text = f"/model {arg}"
                     await cmd_model(model_msg, state)
                 else:
+                    await message.answer("Укажи модель. Пример: llama3", reply_markup=cancel_keyboard)
                     await state.set_state(BotStates.waiting_model)
-                    await message.answer("Укажите модель. Пример: llama3", reply_markup=cancel_keyboard)
                 return
             if intent == "clear":
                 await cmd_clear(message)
@@ -982,15 +1028,15 @@ async def answer(message: Message, state: FSMContext, override_text: str | None 
 
     except Exception as e:
         print(f"[INTENT ERROR] {e}")
+
     await generate(message, user_id, text)
+
 
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    """Main text handler: buttons, natural language, and free-form chat all converge here."""
     await answer(message, state)
 
 
-# Global error handler: prevents bot crash on any unhandled exception
 @router.errors()
 async def global_error_handler(event):
     update = event.update
@@ -1000,7 +1046,8 @@ async def global_error_handler(event):
         try:
             from bot.keyboards.reply import command_keyboard
             await update.message.answer(
-                "⚠️ Произошла ошибка. Попробуйте ещё раз или используйте /help.",
+                "⚠️ Произошла ошибка. Попробуй ещё раз или используй /help.",
+                reply_markup=command_keyboard,
             )
         except Exception as e:
             print(f"[ERROR HANDLER FAIL] {e}")
