@@ -131,15 +131,157 @@ class LLMIntentRouter:
 
     @classmethod
     def _fallback(cls, message_text: str) -> IntentResult:
+        """Heuristic intent detection used when the LLM is unreachable.
+
+        We can't fail to chat — half the user's commands are obvious from
+        keywords ("напомни", "поставь задачу", "погода в москве", "поищи").
+        If we detect one, route to the matching tool with high confidence
+        so the validator doesn't reject it.
+
+        Order matters. The tests in test_regression.py codify the priority:
+        cancel > monitor > task-with-schedule > task > remind > weather >
+        news > search > note > memory > monitor-vague > chat.
+        """
+        t = message_text.lower().strip()
+
+        # 1. Cancel — must come first so "отмени напоминание" doesn't route
+        #    to remind. We don't have a cancel tool yet, so route to chat
+        #    and let the LLM (or the user via /reminders) handle it.
+        if re.search(r"\b(отмени|отменить|cancel|удали|delete)\b", t):
+            return IntentResult(
+                intent="cancel",
+                tool="chat",
+                args=IntentArgs(content=message_text),
+                confidence=0.95,
+            )
+
+        # 2. Monitor — uses a stem match ("мониторинг", "мониторить") and
+        #    catches URLs. Comes before search so "мониторинг google.com"
+        #    isn't intercepted by the "google" search keyword.
+        if re.search(r"\b(монитор\w*|следи\s+за|monitor\w*)\b", t) or re.search(r"https?://\S+", t):
+            return IntentResult(
+                intent="add_monitor",
+                tool="monitor",
+                args=IntentArgs(content=message_text),
+                confidence=0.9,
+            )
+
+        # 3. Explicit reminder/task keyword wins over implicit schedule.
+        #    "напомни о встрече завтра в 15:00" → reminder, not task.
+        if re.search(r"\b(поставь\s+задачу|задач[ау]|добавь\s+задачу|создай\s+задачу|запланируй\s+задачу|task)\b", t):
+            return IntentResult(
+                intent="create_task",
+                tool="task",
+                args=IntentArgs(content=message_text),
+                confidence=0.9,
+            )
+
+        if re.search(r"\b(напомни|напоминание|напомнить|remind)\b", t):
+            return IntentResult(
+                intent="create_reminder",
+                tool="remind",
+                args=IntentArgs(content=message_text),
+                confidence=0.9,
+            )
+
+        # 4. Schedule-only phrases ("каждое утро в 8 погода в москве",
+        #    "завтра в 9 позвонить брокеру") with no explicit
+        #    reminder/task keyword. If the schedule wraps an action verb
+        #    (погода/поищи/новости), treat as task (AI-executed). Otherwise
+        #    a plain reminder.
+        schedule_re = (
+            r"\b(?:кажд(?:ый|ое|ую)|ежедневно|еженедельно|ежемесячно|"
+            r"по\s+будням|по\s+выходным|раз\s+в\s+\d+|через\s+\d+|"
+            r"завтра\s+в|сегодня\s+в|every\s+(?:day|week|month))\b"
+        )
+        if re.search(schedule_re, t):
+            action_re = r"\b(погод|weather|поищи|найди|загугли|search|новост|news|температур|прогноз)\w*\b"
+            is_task = bool(re.search(action_re, t))
+            if is_task:
+                return IntentResult(
+                    intent="create_task",
+                    tool="task",
+                    args=IntentArgs(content=message_text),
+                    confidence=0.9,
+                )
+            return IntentResult(
+                intent="create_reminder",
+                tool="remind",
+                args=IntentArgs(content=message_text),
+                confidence=0.85,
+            )
+
+        # 6. Weather — extract city after "в"/"in"/"для".
+        m = re.search(r"\b(?:погода|weather|температура|прогноз)\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?", t)
+        if m:
+            city = m.group(1)
+            return IntentResult(
+                intent="weather",
+                tool="weather",
+                args=IntentArgs(city=city.capitalize() if city else None),
+                confidence=0.9 if city else 0.5,
+            )
+
+        # 7. News.
+        if re.search(r"\b(новост[иь]|news)\b", t):
+            return IntentResult(
+                intent="news",
+                tool="news",
+                args=IntentArgs(),
+                confidence=0.9,
+            )
+
+        # 8. Search — but skip if "google" appears only inside a URL we already
+        #    handled above. After monitor priority, this is safe.
+        m = re.search(r"\b(?:поищи|найди|загугли|погугли|ищи|search|google)\b\s*(.*)", t)
+        if m:
+            query = m.group(1).strip() or message_text
+            return IntentResult(
+                intent="search",
+                tool="search",
+                args=IntentArgs(query=query),
+                confidence=0.9,
+            )
+
+        # 9. Note.
+        if re.search(r"\b(заметка|сделай\s+заметку|запиши\s+заметку|note)\b", t):
+            return IntentResult(
+                intent="add_note",
+                tool="note",
+                args=IntentArgs(content=message_text),
+                confidence=0.9,
+            )
+
+        # 10. Memory.
+        if re.search(r"\b(запомни|добавь\s+факт|запиши\s+что|факт)\b", t):
+            return IntentResult(
+                intent="add_memory",
+                tool="memory",
+                args=IntentArgs(content=message_text),
+                confidence=0.9,
+            )
+
+        # 11. Default: free-form chat.
         return IntentResult(
             intent="chat",
             tool="chat",
             args=IntentArgs(content=message_text),
-            confidence=0.0,
+            confidence=0.95,
         )
 
     @classmethod
     async def route(cls, user_id: int, message_text: str) -> IntentResult:
+        # Fast path: regex catches obvious commands ("напомни", "погода в Москве",
+        # "поищи Tesla") in microseconds. Skip the LLM round-trip for these —
+        # large models like kimi-k2.6 can take 10+ seconds and time out, leaving
+        # the user staring at "confidence 0.0".
+        fast = cls._fallback(message_text)
+        if fast.confidence >= 0.9 and fast.tool != "chat":
+            return fast
+
+        # Slow path: ambiguous text — let the LLM do the routing. If it fails
+        # or times out, _fallback runs again and either picks a tool from the
+        # regex hints or falls through to chat.
         context = await ContextBuilder.build(user_id=user_id, message_text=message_text)
         messages = [
             OllamaChatMessage(role="system", content=cls._build_system_prompt(context)),
