@@ -229,17 +229,41 @@ class LLMIntentRouter:
                 confidence=0.85,
             )
 
-        # 6. Weather — extract city after "в"/"in"/"для".
-        m = re.search(r"\b(?:погода|weather|температура|прогноз)\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?", t)
+        # 6. Weather — extract city after "в"/"in"/"для". Strip time
+        # phrases first so 'погода на неделю в москве' doesn't latch
+        # onto 'на' as the city.
+        from bot.intent.tools.weather import _detect_days
+        days = _detect_days(message_text)
+        weather_text = re.sub(
+            r"на\s+(?:неделю|выходные|завтра|послезавтра|ближайш\w+|\d+\s*(?:день|дня|дней|сутки|суток))|"
+            r"this\s+week|next\s+\d+\s+days?|tomorrow",
+            " ",
+            t,
+            flags=re.IGNORECASE,
+        )
+        # First, drop a leading 'погод(ы|у|а|...)' / 'прогноз(а)?' chain
+        # so the city extractor isn't tempted to grab 'погоды' as a city.
+        weather_text = re.sub(
+            r"\b(?:прогноз\w*\s+)?(?:погод\w*|weather|температур\w*|прогноз\w*|forecast)\b",
+            "WX",
+            weather_text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        m = re.search(
+            r"WX\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?",
+            weather_text,
+        )
         if m:
-            city = m.group(1)
-            from bot.intent.tools.weather import _detect_days
+            city = (m.group(1) or "").strip()
+            if city.lower() in {"на", "по", "для", "в", "с", "за", "и", "the", "a", "in", "for"}:
+                city = ""
             return IntentResult(
                 intent="weather",
                 tool="weather",
                 args=IntentArgs(
                     city=city.capitalize() if city else None,
-                    days=_detect_days(message_text),
+                    days=days,
                 ),
                 confidence=0.9 if city else 0.5,
             )
