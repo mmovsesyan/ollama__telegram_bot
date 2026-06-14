@@ -6,12 +6,12 @@ from bot.services.weather import get_forecast, get_weather
 
 
 _FORECAST_PHRASE_RE = re.compile(
-    r"прогноз|неделю|неделя|выходные|"
+    r"прогноз|неделю|неделя|месяц|выходные|"
     r"(?<!\w)(?:на\s+)?завтра(?!\w)|послезавтра|"
     r"на\s+\d+\s*(?:день|дня|дней|сутки|суток)|"
     r"\d+\s*(?:день|дня|дней|сутки|суток)|"
-    r"на\s+ближайш\w*|ближайш\w*\s+(?:неделю|дни|дней)|"
-    r"forecast|next\s+\d+\s+days?|this\s+week|tomorrow",
+    r"на\s+ближайш\w*|ближайш\w*\s+(?:неделю|месяц|дни|дней)|"
+    r"forecast|next\s+\d+\s+days?|this\s+week|this\s+month|tomorrow",
     re.IGNORECASE,
 )
 _DAYS_RE = re.compile(
@@ -30,6 +30,9 @@ def _detect_days(text: str) -> int | None:
         n = int(m.group(1) or m.group(2))
         return max(1, min(n, 16))
     low = text.lower()
+    # Open-Meteo caps daily forecast at 16 days, so 'месяц' rounds down.
+    if "месяц" in low or "this month" in low:
+        return 16
     if "недел" in low or "this week" in low:
         return 7
     if "выходные" in low:

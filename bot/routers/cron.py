@@ -1799,7 +1799,7 @@ async def cmd_weather(message: Message, state: FSMContext):
         await message.answer(
             "🌤 Введи название города:\n"
             "Пример: Москва\n"
-            "Или прогноз: «Москва на неделю», «Сочи 5 дней»",
+            "Или прогноз: «Москва на неделю», «Сочи 5 дней», «Москва месяц»",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_weather)
@@ -1818,7 +1818,7 @@ async def btn_weather(message: Message, state: FSMContext):
     await message.answer(
         "🌤 Введи название города:\n"
         "Пример: Москва\n"
-        "Или прогноз: «Москва на неделю», «Сочи 5 дней»",
+        "Или прогноз: «Москва на неделю», «Сочи 5 дней», «Москва месяц»",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_weather)
@@ -1837,8 +1837,8 @@ async def _process_weather(message: Message, raw: str):
     # Strip trailing duration / forecast phrases so 'Москва на неделю'
     # leaves just 'Москва' as the city.
     city = re.sub(
-        r"\s*(?:на\s+)?(?:неделю|неделя|выходные|завтра|послезавтра|"
-        r"ближайш\w*|прогноз\w*|forecast|this\s+week|tomorrow|"
+        r"\s*(?:на\s+)?(?:неделю|неделя|месяц|выходные|завтра|послезавтра|"
+        r"ближайш\w*|прогноз\w*|forecast|this\s+week|this\s+month|tomorrow|"
         r"\d+\s*(?:день|дня|дней|сутки|суток)|next\s+\d+\s+days?)\s*",
         " ",
         raw,
