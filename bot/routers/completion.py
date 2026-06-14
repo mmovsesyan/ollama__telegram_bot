@@ -721,6 +721,29 @@ def _extract_text_from_file(file_path: str, suffix: str) -> str:
             return "[DOCX: установите python-docx для извлечения текста]"
         except Exception as e:
             return f"[DOCX extraction error: {e}]"
+    elif suffix in (".xlsx", ".xlsm"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            parts = []
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                parts.append(f"# Лист: {sheet}")
+                row_count = 0
+                for row in ws.iter_rows(values_only=True):
+                    cells = ["" if v is None else str(v) for v in row]
+                    if any(cells):
+                        parts.append("\t".join(cells))
+                    row_count += 1
+                    if row_count >= 500:
+                        parts.append("...[обрезано на 500 строках]")
+                        break
+            wb.close()
+            return "\n".join(parts)
+        except ImportError:
+            return "[XLSX: установите openpyxl для извлечения данных]"
+        except Exception as e:
+            return f"[XLSX extraction error: {e}]"
     else:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
