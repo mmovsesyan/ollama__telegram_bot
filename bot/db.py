@@ -228,6 +228,18 @@ class Database:
                     document_id UNINDEXED,
                     user_id UNINDEXED
                 );
+
+                CREATE TABLE IF NOT EXISTS images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    telegram_file_id TEXT,
+                    local_path TEXT,
+                    caption TEXT,
+                    description TEXT,
+                    ocr_text TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id, created_at);
             """)
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
@@ -700,3 +712,46 @@ class Database:
                 (query, user_id, limit),
             )
             return [dict(r) for r in cursor.fetchall()]
+
+    def add_image(
+        self,
+        user_id: int,
+        telegram_file_id: str | None,
+        local_path: str,
+        caption: str | None,
+        description: str | None,
+        ocr_text: str | None,
+    ) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO images
+                (user_id, telegram_file_id, local_path, caption, description, ocr_text)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, telegram_file_id, local_path, caption, description, ocr_text),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_images(self, user_id: int) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM images WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_image(self, image_id: int) -> dict | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM images WHERE id = ?", (image_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_image(self, image_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
+            conn.commit()
+            return cursor.rowcount > 0

@@ -50,6 +50,10 @@ SMART_REMINDERS_COOLDOWN_MIN = int(os.getenv("SMART_REMINDERS_COOLDOWN_MIN", def
 SMART_REMINDERS_MESSAGE_THRESHOLD = int(os.getenv("SMART_REMINDERS_MESSAGE_THRESHOLD", default="10"))
 SMART_REMINDERS_CONFIDENCE = float(os.getenv("SMART_REMINDERS_CONFIDENCE", default="0.7"))
 
+# Image / vision settings
+IMAGES_DIR = os.getenv("IMAGES_DIR", default="data")
+VISION_MODEL = os.getenv("VISION_MODEL", default=OLLAMA_MODEL)
+
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 

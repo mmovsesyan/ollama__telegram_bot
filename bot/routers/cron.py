@@ -2278,6 +2278,81 @@ async def cb_suggest(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Сохранено")
 
 
+@router.message(lambda m: m.text and m.text == "/images")
+async def cmd_images(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    from bot.services import images as images_service
+    images = images_service.get_user_images(message.from_user.id)
+    if not images:
+        await message.answer(
+            "📷 Нет сохранённых фото.\n\nПросто пришли мне изображение.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    lines = ["📷 Твои фото:"]
+    for idx, img in enumerate(images, 1):
+        created = img.get("created_at", "")
+        caption = img.get("caption") or ""
+        desc = (img.get("description") or "")[:60]
+        header = f"#{idx} ID {img['id']}"
+        if caption:
+            header += f": {caption}"
+        lines.append(f"{header}\n   {desc}... ({created})")
+    lines.append("\nУдалить: /forget_image <id>")
+    await message.answer("\n".join(lines), reply_markup=command_keyboard)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/forget_image"))
+async def cmd_forget_image(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Введи ID фото:\n"
+            "Пример: /forget_image 3\n\n"
+            "Список фото: /images",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    try:
+        image_id = int(parts[1])
+    except ValueError:
+        await message.answer("Укажи числовой ID фото.", reply_markup=command_keyboard)
+        return
+
+    from bot.services import images as images_service
+    img = images_service.get_image(image_id)
+    if not img or img.get("user_id") != message.from_user.id:
+        await message.answer("⚠️ Фото не найдено или нет доступа.", reply_markup=command_keyboard)
+        return
+
+    if images_service.delete_image(image_id):
+        await message.answer(
+            f"✅ Фото ID {image_id} удалёно.",
+            reply_markup=command_keyboard,
+        )
+    else:
+        await message.answer("⚠️ Не удалось удалить фото.", reply_markup=command_keyboard)
+
+
 # --- Search ---
 
 @router.message(lambda m: m.text and m.text.startswith("/search"))

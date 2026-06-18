@@ -118,3 +118,18 @@ def done_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="✅ Готово", callback_data="done")],
         ]
     )
+
+
+def image_actions_keyboard(image_id: int) -> InlineKeyboardMarkup:
+    """Inline actions shown under a processed image: save to memory or dismiss."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧠 Сохранить в память",
+                    callback_data=f"img_save:{image_id}",
+                ),
+                InlineKeyboardButton(text="❌ Закрыть", callback_data="img_close"),
+            ],
+        ]
+    )

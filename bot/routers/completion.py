@@ -14,7 +14,7 @@ import time
 logger = logging.getLogger(__name__)
 
 from bot.bot import bot as aiogram_bot
-from bot.keyboards.inline import answer_keyboard
+from bot.keyboards.inline import answer_keyboard, image_actions_keyboard
 from bot.keyboards.reply import command_keyboard, cancel_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
@@ -804,5 +804,99 @@ async def handle_document(message: Message, state: FSMContext):
         reply_markup=command_keyboard,
     )
     documents_service.map_summary_message(sent.message_id, doc["id"])
+
+
+@router.message(F.photo)
+async def handle_photo(message: Message, state: FSMContext):
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
+    if not _is_allowed(user_id):
+        return
+    photo_sizes = message.photo or []
+    if not photo_sizes:
+        return
+
+    from bot.services import images as images_service
+    largest = images_service._largest_photo(photo_sizes)
+    if largest is None:
+        return
+
+    await message.answer("📷 Скачиваю фото и смотрю на него...")
+
+    tmp_path = None
+    try:
+        file = await aiogram_bot.get_file(largest.file_id)
+        suffix = ".jpg"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = tmp.name
+        await aiogram_bot.download_file(file.file_path, tmp_path)
+    except Exception as e:
+        logger.exception("[PHOTO] download failed for user_id=%s", user_id)
+        await message.answer(f"❌ Ошибка загрузки фото: {str(e)[:200]}", reply_markup=command_keyboard)
+        return
+
+    try:
+        image = await images_service.process_image(
+            user_id=user_id,
+            telegram_file_id=largest.file_id,
+            source_path=tmp_path,
+            caption=message.caption,
+            filename="image.jpg",
+            base_dir=DOCUMENTS_DIR,
+        )
+    except Exception as e:
+        logger.exception("[PHOTO] processing failed for user_id=%s", user_id)
+        await message.answer(f"❌ Ошибка обработки фото: {str(e)[:200]}", reply_markup=command_keyboard)
+        return
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    lines = ["📷 Описание:"]
+    description = image.get("description") or "[не удалось получить описание]"
+    lines.append(description)
+    ocr_text = image.get("ocr_text")
+    if ocr_text:
+        lines.append(f"\n📝 Текст на фото:\n{ocr_text}")
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=image_actions_keyboard(image["id"]),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("img_save:"))
+async def cb_save_image_to_memory(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not callback.from_user:
+        return
+    user_id = callback.from_user.id
+    if not _is_allowed(user_id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    try:
+        image_id = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    from bot.services import images as images_service
+    result = await images_service.save_description_to_memory(user_id, image_id)
+    await callback.message.edit_text(result, reply_markup=command_keyboard)
+    await callback.answer("Сохранено")
+
+
+@router.callback_query(lambda c: c.data == "img_close")
+async def cb_image_close(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    await callback.answer("Закрыто")
 
 
