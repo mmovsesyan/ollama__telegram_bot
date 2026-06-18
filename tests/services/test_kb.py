@@ -10,6 +10,7 @@ from bot.db import Database
 from bot.intent.schemas import IntentArgs, IntentResult, ToolContext
 from bot.intent.tools.kb_search import KbSearchTool
 from bot.services import kb as kb_service
+from bot.services.kb import _format_hit, _format_web_fallback_item
 from bot.services.kb_extract import _looks_skippable, _parse_facts
 
 
@@ -186,6 +187,64 @@ class TestKbExtractHelpers:
         facts = _parse_facts("[opinion] I think Python is good")
         assert len(facts) == 1
         assert facts[0][0] == "note"  # coerced from 'opinion'
+
+
+class TestKbFormatting:
+    def test_format_hit_truncates_long_text(self):
+        hit = {"category": "fact", "content": "x" * 400}
+        text = _format_hit(hit, 1)
+        assert text.startswith("1. 📌")
+        assert len(text) < 350
+
+    def test_format_hit_uses_summary(self):
+        hit = {"category": "note", "content": "long", "summary": "short"}
+        text = _format_hit(hit, 2)
+        assert "short" in text
+        assert "long" not in text
+
+    def test_format_web_fallback_item_full(self):
+        item = {
+            "title": "Wiki",
+            "url": "https://ru.wikipedia.org/wiki/Python",
+            "body": "Python is a language.\nMore text.",
+        }
+        text = _format_web_fallback_item(item, 1)
+        assert "1. Wiki" in text
+        assert "ru.wikipedia.org" in text
+        assert "Python is a language. More text." in text
+        assert "https://ru.wikipedia.org/wiki/Python" in text
+
+    def test_format_web_fallback_item_without_url(self):
+        item = {"title": "No link", "content": "body"}
+        text = _format_web_fallback_item(item, 2)
+        assert "2. No link" in text
+        assert "body" in text
+        assert "🔗" not in text
+
+    @pytest.mark.asyncio
+    async def test_web_fallback_uses_clean_format(self, db):
+        kb_service.db = db
+
+        async def fake_search(query, max_results=5):
+            return (
+                {
+                    "results": [
+                        {
+                            "title": "Result",
+                            "url": "https://example.com/a",
+                            "body": "snippet line\nnext",
+                        }
+                    ]
+                },
+                None,
+            )
+
+        with patch("bot.routers.cron.ollama_web_search", side_effect=fake_search):
+            text, hits, used_web = await kb_service.search_kb_with_web_fallback(11, "x")
+        assert used_web is True
+        assert "интернет" in text.lower()
+        assert "snippet line next" in text
+        assert "example.com" in text
 
 
 class TestKbExtractIntegration:

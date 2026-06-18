@@ -1,8 +1,19 @@
+import sys
+from types import ModuleType
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from bot.handlers.smart import smart_message_handler
+# bot.bot raises at import if TELEGRAM_TOKEN is missing; provide a fake module
+# before importing the completion router used by _persist_exchange.
+if "bot.bot" not in sys.modules:
+    _fake_bot_module = ModuleType("bot.bot")
+    _fake_bot_module.bot = MagicMock()
+    sys.modules["bot.bot"] = _fake_bot_module
+
+from bot.handlers.smart import _persist_exchange, smart_message_handler
 from bot.keyboards.reply import command_keyboard
+from bot.routers import completion as completion_module
 
 
 def _make_message(text: str = "hello world") -> MagicMock:
@@ -211,3 +222,96 @@ async def test_handler_error_does_not_call_executor():
     ) as mock_exec:
         await smart_message_handler(message, state=None)
     mock_exec.assert_not_awaited()
+
+
+@pytest.mark.filterwarnings("ignore:coroutine 'AsyncMockMixin._execute_mock_call' was never awaited:RuntimeWarning")
+class TestPersistExchange:
+    @pytest.fixture(autouse=True)
+    def reset_state(self, monkeypatch):
+        import bot.handlers.smart as smart_module
+        smart_module.db = None
+        completion_module.chats.clear()
+        completion_module.db = None
+        yield
+        smart_module.db = None
+        completion_module.chats.clear()
+        completion_module.db = None
+
+    def _patch_completion(self, chat=None):
+        completion_module.chats = {1: chat} if chat else {}
+        completion_module._create_chat = MagicMock()
+        completion_module.refresh_system_prompt = MagicMock()
+
+    @pytest.mark.asyncio
+    async def test_persist_exits_when_db_none(self):
+        import bot.handlers.smart as smart_module
+        smart_module.db = None
+        self._patch_completion()
+        _persist_exchange(1, "hi", "ok")
+        completion_module._create_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persist_saves_messages_and_extracts_facts(self):
+        import bot.handlers.smart as smart_module
+        fake_db = MagicMock()
+        fake_db.save_message = MagicMock()
+        smart_module.db = fake_db
+
+        chat = MagicMock()
+        chat.session_id = 10
+        chat.selected_model = "model"
+        chat.ollama_chat.messages = []
+
+        self._patch_completion(chat)
+
+        with patch("bot.services.kb_extract.extract_facts_from_exchange", new=AsyncMock()) as mock_extract:
+            with patch("asyncio.create_task") as mock_create_task:
+                _persist_exchange(1, "user text", "assistant text", save_messages=True)
+
+        fake_db.save_message.assert_any_call(1, 10, "user", "user text", "model")
+        fake_db.save_message.assert_any_call(1, 10, "assistant", "assistant text", "model")
+        mock_extract.assert_called_once_with(fake_db, 1, "user text", "assistant text")
+        mock_create_task.assert_called_once()
+        completion_module.refresh_system_prompt.assert_called_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_persist_skips_saving_for_chat_path(self):
+        import bot.handlers.smart as smart_module
+        fake_db = MagicMock()
+        smart_module.db = fake_db
+
+        chat = MagicMock()
+        chat.session_id = 10
+        chat.selected_model = "model"
+        chat.ollama_chat.messages = []
+
+        self._patch_completion(chat)
+
+        with patch("bot.services.kb_extract.extract_facts_from_exchange", new=AsyncMock()):
+            with patch("asyncio.create_task"):
+                _persist_exchange(1, "hi", "", save_messages=False)
+
+        fake_db.save_message.assert_not_called()
+        completion_module.refresh_system_prompt.assert_called_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_persist_uses_chat_assistant_when_text_empty(self):
+        import bot.handlers.smart as smart_module
+        fake_db = MagicMock()
+        smart_module.db = fake_db
+
+        chat = MagicMock()
+        chat.session_id = 10
+        chat.selected_model = "model"
+        chat.ollama_chat.messages = [
+            MagicMock(role="user", content="hi"),
+            MagicMock(role="assistant", content="streamed reply"),
+        ]
+
+        self._patch_completion(chat)
+
+        with patch("bot.services.kb_extract.extract_facts_from_exchange", new=AsyncMock()) as mock_extract:
+            with patch("asyncio.create_task"):
+                _persist_exchange(1, "hi", "", save_messages=False)
+
+        mock_extract.assert_called_once_with(fake_db, 1, "hi", "streamed reply")
