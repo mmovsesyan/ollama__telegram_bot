@@ -2027,6 +2027,17 @@ async def _process_news(message: Message, topic: str | None = None):
     await message.answer(full_text, reply_markup=command_keyboard)
 
 
+async def _process_digest(message: Message):
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
+    await message.answer("📰 Собираю персональный дайджест...")
+
+    from bot.services.news_categories import get_personalized_digest
+    text = await get_personalized_digest(user_id)
+    await message.answer(text, reply_markup=command_keyboard)
+
+
 @router.message(lambda m: m.text and m.text.startswith("/news"))
 async def cmd_news(message: Message, state: FSMContext):
     """`/news` alone → ask for topic. `/news <topic>` → search immediately."""
@@ -2040,6 +2051,7 @@ async def cmd_news(message: Message, state: FSMContext):
         await message.answer(
             "📰 По какой теме новости?\n"
             "Например: «ИИ», «Tesla», «биткоин», «спорт»\n"
+            "Или «дайджест» — персональная подборка по категориям.\n"
             "Или просто «топ» — покажу самое актуальное.",
             reply_markup=cancel_keyboard,
         )
@@ -2058,6 +2070,7 @@ async def btn_news(message: Message, state: FSMContext):
     await message.answer(
         "📰 По какой теме новости?\n"
         "Например: «ИИ», «Tesla», «биткоин», «спорт»\n"
+        "Или «дайджест» — персональная подборка по категориям.\n"
         "Или просто «топ» — покажу самое актуальное.",
         reply_markup=cancel_keyboard,
     )
@@ -2076,11 +2089,83 @@ async def process_news(message: Message, state: FSMContext):
     if await _fsm_guard(message, state):
         return
     topic = message.text.strip()
-    # "топ" / "top" / empty → no topic, fall back to generic
-    if topic.lower() in ("топ", "top", ""):
+    lowered = topic.lower()
+    if lowered in ("топ", "top", ""):
         topic = None
-    await _process_news(message, topic)
+        await _process_news(message, topic)
+    elif lowered in ("дайджест", "digest", "мои", "подписки"):
+        await _process_digest(message)
+    else:
+        await _process_news(message, topic)
     await state.clear()
+
+
+@router.message(lambda m: m.text and m.text.startswith("/news_subscribe"))
+async def cmd_news_subscribe(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "📰 Какую категорию добавить?\n"
+            "tech, markets, ai, science, crypto, world",
+            reply_markup=cancel_keyboard,
+        )
+        return
+
+    from bot.services.news_categories import add_user_category
+    cats, added = add_user_category(message.from_user.id, parts[1])
+    if added:
+        await message.answer(
+            f"✅ Добавлено. Твои категории: {', '.join(cats)}",
+            reply_markup=command_keyboard,
+        )
+    else:
+        await message.answer(
+            f"⚠️ Уже есть или неизвестная категория. Текущие: {', '.join(cats)}",
+            reply_markup=command_keyboard,
+        )
+
+
+@router.message(lambda m: m.text and m.text.startswith("/news_unsubscribe"))
+async def cmd_news_unsubscribe(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "📰 Какую категорию убрать?\n"
+            "tech, markets, ai, science, crypto, world",
+            reply_markup=cancel_keyboard,
+        )
+        return
+
+    from bot.services.news_categories import remove_user_category
+    cats, removed = remove_user_category(message.from_user.id, parts[1])
+    if removed:
+        await message.answer(
+            f"✅ Убрано. Твои категории: {', '.join(cats)}",
+            reply_markup=command_keyboard,
+        )
+    else:
+        await message.answer(
+            f"⚠️ Категории не было в подписках. Текущие: {', '.join(cats)}",
+            reply_markup=command_keyboard,
+        )
 
 
 # --- Search ---

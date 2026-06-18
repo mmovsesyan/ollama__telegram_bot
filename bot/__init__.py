@@ -71,11 +71,13 @@ async def main() -> None:
     from bot.services import rss_news as rss_news_service
     from bot.services import briefing as briefing_service
     from bot.services import voice as voice_service
+    from bot.services import news_categories as news_categories_service
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
     briefing_service.db = db
     voice_service.db = db
+    news_categories_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE
