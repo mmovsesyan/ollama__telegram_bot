@@ -203,6 +203,26 @@ class Database:
                     UNIQUE(user_id, url)
                 );
                 CREATE INDEX IF NOT EXISTS idx_shown_news_user ON shown_news(user_id, shown_at);
+
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    telegram_file_id TEXT,
+                    local_path TEXT,
+                    filename TEXT,
+                    mime_type TEXT,
+                    extracted_text TEXT,
+                    summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id, created_at);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(
+                    chunk,
+                    document_id UNINDEXED,
+                    user_id UNINDEXED
+                );
             """)
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
@@ -606,3 +626,72 @@ class Database:
                 (date_str, user_id)
             )
             conn.commit()
+
+    def add_document(
+        self,
+        user_id: int,
+        telegram_file_id: str | None,
+        local_path: str,
+        filename: str,
+        mime_type: str | None,
+        extracted_text: str,
+        summary: str | None,
+    ) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO documents
+                (user_id, telegram_file_id, local_path, filename, mime_type, extracted_text, summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, telegram_file_id, local_path, filename, mime_type, extracted_text, summary),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_documents(self, user_id: int) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_document(self, doc_id: int) -> dict | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_document(self, doc_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            conn.execute("DELETE FROM document_chunks_fts WHERE document_id = ?", (doc_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def add_document_chunks(self, doc_id: int, user_id: int, chunks: list[str]):
+        with sqlite3.connect(self.db_path) as conn:
+            for chunk in chunks:
+                conn.execute(
+                    "INSERT INTO document_chunks_fts (chunk, document_id, user_id) VALUES (?, ?, ?)",
+                    (chunk, doc_id, user_id),
+                )
+            conn.commit()
+
+    def search_document_chunks(self, user_id: int, query: str, limit: int = 5) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT document_id, chunk, rank
+                FROM document_chunks_fts
+                WHERE document_chunks_fts MATCH ? AND user_id = ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, user_id, limit),
+            )
+            return [dict(r) for r in cursor.fetchall()]

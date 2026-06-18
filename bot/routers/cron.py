@@ -2168,6 +2168,77 @@ async def cmd_news_unsubscribe(message: Message, state: FSMContext):
         )
 
 
+@router.message(lambda m: m.text and m.text == "/docs")
+async def cmd_docs(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    from bot.services import documents as documents_service
+    docs = documents_service.get_user_documents(message.from_user.id)
+    if not docs:
+        await message.answer(
+            "📄 Нет сохранённых документов.\n\nПросто пришли мне PDF, TXT или DOCX.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    lines = ["📄 Твои документы:"]
+    for idx, doc in enumerate(docs, 1):
+        created = doc.get("created_at", "")
+        lines.append(f"#{idx} ID {doc['id']}: {doc['filename']} ({created})")
+    lines.append("\nУдалить: /forget_doc <id>")
+    await message.answer("\n".join(lines), reply_markup=command_keyboard)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/forget_doc"))
+async def cmd_forget_doc(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Введи ID документа:\n"
+            "Пример: /forget_doc 3\n\n"
+            "Список документов: /docs",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    try:
+        doc_id = int(parts[1])
+    except ValueError:
+        await message.answer("Укажи числовой ID документа.", reply_markup=command_keyboard)
+        return
+
+    from bot.services import documents as documents_service
+    doc = documents_service.get_document(doc_id)
+    if not doc or doc.get("user_id") != message.from_user.id:
+        await message.answer("⚠️ Документ не найден или нет доступа.", reply_markup=command_keyboard)
+        return
+
+    if documents_service.delete_document(doc_id):
+        await message.answer(
+            f"✅ Документ *{doc['filename']}* удалён.",
+            reply_markup=command_keyboard,
+            parse_mode="Markdown",
+        )
+    else:
+        await message.answer("⚠️ Не удалось удалить документ.", reply_markup=command_keyboard)
+
+
 # --- Search ---
 
 @router.message(lambda m: m.text and m.text.startswith("/search"))

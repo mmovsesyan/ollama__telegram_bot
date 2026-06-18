@@ -6,9 +6,12 @@ from pydantic import BaseModel
 from typing import Any
 import asyncio
 import json
+import logging
 import os
 import tempfile
 import time
+
+logger = logging.getLogger(__name__)
 
 from bot.bot import bot as aiogram_bot
 from bot.keyboards.inline import answer_keyboard
@@ -20,6 +23,7 @@ from bot.security import is_allowed as _is_allowed
 from bot.states import BotStates
 from bot.settings import (
     COMPACTION_EVERY_N,
+    DOCUMENTS_DIR,
     MAX_CONTEXT_MESSAGES,
     MAX_CONTEXT_TOKENS,
     OLLAMA_MODEL,
@@ -729,74 +733,22 @@ async def _download_document(document):
     return tmp_path, document.file_name or "file", suffix.lower()
 
 
-def _extract_text_from_file(file_path: str, suffix: str) -> str:
-    if suffix == ".pdf":
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(file_path)
-            parts = []
-            for i, page in enumerate(reader.pages):
-                parts.append(page.extract_text() or "")
-                if i >= 30:
-                    parts.append("\n...[truncated at 30 pages]")
-                    break
-            return "\n".join(parts)
-        except ImportError:
-            return "[PDF: установите pypdf для извлечения текста]"
-        except Exception as e:
-            return f"[PDF extraction error: {e}]"
-    elif suffix == ".json":
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        try:
-            data = json.loads(content)
-            return json.dumps(data, ensure_ascii=False, indent=2)
-        except Exception:
-            return content
-    elif suffix in (".csv", ".tsv"):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-    elif suffix in (".txt", ".md", ".py", ".js", ".html", ".css", ".sql", ".log", ".xml", ".yaml", ".yml"):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-    elif suffix == ".docx":
-        try:
-            import docx
-            doc = docx.Document(file_path)
-            return "\n".join(para.text for para in doc.paragraphs)
-        except ImportError:
-            return "[DOCX: установите python-docx для извлечения текста]"
-        except Exception as e:
-            return f"[DOCX extraction error: {e}]"
-    elif suffix in (".xlsx", ".xlsm"):
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
-            parts = []
-            for sheet in wb.sheetnames:
-                ws = wb[sheet]
-                parts.append(f"# Лист: {sheet}")
-                row_count = 0
-                for row in ws.iter_rows(values_only=True):
-                    cells = ["" if v is None else str(v) for v in row]
-                    if any(cells):
-                        parts.append("\t".join(cells))
-                    row_count += 1
-                    if row_count >= 500:
-                        parts.append("...[обрезано на 500 строках]")
-                        break
-            wb.close()
-            return "\n".join(parts)
-        except ImportError:
-            return "[XLSX: установите openpyxl для извлечения данных]"
-        except Exception as e:
-            return f"[XLSX extraction error: {e}]"
-    else:
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            return f"[Unsupported or binary file type: {suffix}]"
+async def answer_document_question(message: Message, user_id: int, question: str, reply_to_message_id: int) -> bool:
+    """If reply_to_message_id maps to a saved document, answer from its chunks.
+
+    Returns True when a document was found and a reply was sent, so callers can
+    skip the generic chat path.
+    """
+    from bot.services import documents as documents_service
+    doc_id = documents_service.doc_id_for_message(reply_to_message_id)
+    if doc_id is None:
+        return False
+
+    answer = await documents_service.answer_question(user_id, question, doc_id=doc_id)
+    if not answer:
+        return False
+    await message.answer(answer, reply_markup=command_keyboard)
+    return True
 
 
 @router.message(F.document)
@@ -815,24 +767,42 @@ async def handle_document(message: Message, state: FSMContext):
     tmp_path = None
     try:
         tmp_path, fname, suffix = await _download_document(document)
-        text = _extract_text_from_file(tmp_path, suffix)
     except Exception as e:
+        await message.answer(f"❌ Ошибка загрузки файла: {str(e)[:200]}", reply_markup=command_keyboard)
+        return
+
+    try:
+        from bot.services import documents as documents_service
+        doc = await documents_service.save_document(
+            user_id=user_id,
+            telegram_file_id=document.file_id,
+            filename=document.file_name,
+            mime_type=document.mime_type,
+            source_path=tmp_path,
+            base_dir=DOCUMENTS_DIR,
+        )
+    except Exception as e:
+        logger.exception("[DOCUMENT] failed to save document for user_id=%s", user_id)
         await message.answer(f"❌ Ошибка обработки файла: {str(e)[:200]}", reply_markup=command_keyboard)
         return
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
-    if not text or not text.strip():
-        await message.answer("❌ Не удалось извлечь текст из файла.", reply_markup=command_keyboard)
-        return
-
-    max_chars = 12000
-    original_len = len(text)
-    if len(text) > max_chars:
-        text = text[:max_chars] + f"\n\n...[обрезано с {original_len} символов]"
-
-    prompt = f"[Документ: {fname}]\n\n{text}\n\nПроанализируй содержимое и дай краткий обзор."
-    await generate(message, user_id, prompt)
+    summary = doc.get("summary") or "[краткое содержание недоступно]"
+    reply = (
+        f"📄 Сохранил: *{doc['filename']}*\n"
+        f"📝 Краткое содержание:\n{summary}\n\n"
+        f"Задавай вопросы, отвечая на это сообщение."
+    )
+    sent = await message.answer(
+        reply,
+        parse_mode="Markdown",
+        reply_markup=command_keyboard,
+    )
+    documents_service.map_summary_message(sent.message_id, doc["id"])
 
 

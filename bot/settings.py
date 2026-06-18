@@ -38,6 +38,12 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", default="tiny")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", default="auto")  # cpu, cuda, auto
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", default="default")  # int8, float16, default
 
+# Document storage and chunking settings
+DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", default="data")
+DOCUMENT_CHUNK_SIZE = int(os.getenv("DOCUMENT_CHUNK_SIZE", default="1500"))
+DOCUMENT_CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", default="200"))
+DOCUMENT_MAX_SUMMARY_CHARS = int(os.getenv("DOCUMENT_MAX_SUMMARY_CHARS", default="8000"))
+
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 
