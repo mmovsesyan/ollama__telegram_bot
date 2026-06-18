@@ -1,7 +1,9 @@
 """User profile helpers: timezone + name."""
 
-from datetime import datetime, timezone as _utc_tz
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+_utc_tz = timezone.utc
 
 
 # Country/region keyword → IANA timezone. We pick the *most populous* zone

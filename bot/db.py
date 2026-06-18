@@ -45,6 +45,35 @@ class Database:
                 conn.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'manual'")
             except sqlite3.OperationalError:
                 pass
+            # Migrate user_prefs: proactive/morning-briefing settings.
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_time TEXT DEFAULT '08:00'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN proactive_enabled INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN news_categories TEXT DEFAULT 'tech,markets,ai'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN voice_output_enabled INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_city TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN last_briefing_date TEXT")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +103,13 @@ class Database:
                     notes TEXT,
                     name TEXT,
                     timezone TEXT DEFAULT 'UTC',
+                    briefing_enabled INTEGER DEFAULT 1,
+                    briefing_time TEXT DEFAULT '08:00',
+                    proactive_enabled INTEGER DEFAULT 1,
+                    news_categories TEXT DEFAULT 'tech,markets,ai',
+                    voice_output_enabled INTEGER DEFAULT 0,
+                    briefing_city TEXT,
+                    last_briefing_date TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -549,3 +585,24 @@ class Database:
             )
             conn.commit()
             return cursor.rowcount
+
+    def get_briefing_enabled_users(self) -> list[dict]:
+        """Return users who have morning briefing enabled."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT user_id, timezone, briefing_enabled, briefing_time, "
+                "proactive_enabled, news_categories, briefing_city, last_briefing_date "
+                "FROM user_prefs WHERE briefing_enabled = 1 AND proactive_enabled = 1"
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_briefing_sent(self, user_id: int, date_str: str):
+        """Record the last date a morning briefing was sent so we don't
+        spam the user if the scheduler ticks multiple times in the same minute."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE user_prefs SET last_briefing_date = ? WHERE user_id = ?",
+                (date_str, user_id)
+            )
+            conn.commit()

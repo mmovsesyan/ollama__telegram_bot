@@ -30,6 +30,8 @@ COMMANDS = [
     BotCommand(command="model", description="Сменить модель"),
     BotCommand(command="clear", description="Очистить историю"),
     BotCommand(command="report", description="Ежедневный отчет"),
+    BotCommand(command="settings", description="Настройки бота"),
+    BotCommand(command="briefing", description="Утренний брифинг сейчас"),
 ]
 
 
@@ -39,7 +41,7 @@ async def main() -> None:
 
     from bot.bot import bot as aiogram_bot
     from bot.bot import dp
-    from bot.routers import start, completion, cron
+    from bot.routers import start, completion, cron, settings
     from bot.handlers import smart as smart_handler
 
     # Set Telegram menu commands
@@ -59,20 +61,23 @@ async def main() -> None:
     cron.db = db
     smart_handler.db = db
     start.db = db
+    settings.db = db
     from bot.intent.context import ContextBuilder
     ContextBuilder.db = db
     from bot.services import reminders as reminders_service
     from bot.services import kb as kb_service
     from bot.services import rss_news as rss_news_service
+    from bot.services import briefing as briefing_service
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
+    briefing_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE
     # smart so its button matchers (F.text == "❓ Помощь" etc.) win — smart
     # is the catch-all for everything else.
-    dp.include_routers(start.router, cron.router, completion.router, smart_handler.router)
+    dp.include_routers(start.router, settings.router, cron.router, completion.router, smart_handler.router)
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()
@@ -239,9 +244,28 @@ async def main() -> None:
         from bot.routers import completion
         await completion._cleanup_old_chats()
 
+    async def check_briefings():
+        if db is None:
+            return
+        from bot.services import briefing as briefing_service
+        from bot.services.profile import now_in_tz
+        users = db.get_briefing_enabled_users()
+        for prefs in users:
+            tz_name = prefs.get("timezone") or "UTC"
+            local_now = now_in_tz(tz_name)
+            current_time = local_now.strftime("%H:%M")
+            if current_time != (prefs.get("briefing_time") or "08:00"):
+                continue
+            today_str = local_now.strftime("%Y-%m-%d")
+            if prefs.get("last_briefing_date") == today_str:
+                continue
+            await briefing_service.send_briefing(prefs["user_id"], aiogram_bot)
+            db.update_briefing_sent(prefs["user_id"], today_str)
+
     scheduler.add_job(check_reminders, IntervalTrigger(seconds=30), id="reminders", replace_existing=True)
     scheduler.add_job(check_monitors, IntervalTrigger(seconds=60), id="monitors", replace_existing=True)
     scheduler.add_job(cleanup_sessions, IntervalTrigger(minutes=30), id="cleanup", replace_existing=True)
+    scheduler.add_job(check_briefings, IntervalTrigger(minutes=1), id="briefing", replace_existing=True)
     scheduler.start()
 
     print(f"[OLLAMA] Selected base model -> {OLLAMA_MODEL}")

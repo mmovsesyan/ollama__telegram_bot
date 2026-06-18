@@ -26,3 +26,6 @@ class BotStates(StatesGroup):
     waiting_fetch = State()
     onboarding_name = State()
     onboarding_country = State()
+    waiting_briefing_time = State()
+    waiting_briefing_categories = State()
+    waiting_briefing_city = State()

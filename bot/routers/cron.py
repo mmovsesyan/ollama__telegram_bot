@@ -20,6 +20,7 @@ from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
 from bot.security import is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
+from bot.routers.settings import cmd_settings
 from bot.services.profile import format_local
 from bot.services.weather import get_forecast, get_weather
 from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
@@ -62,7 +63,7 @@ def _format_trigger(trigger_at, user_id: int) -> str:
 _COMMAND_BUTTONS = {
     "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
     "📝 Заметка", "📒 Список", "🧠 Память", "📚 База", "🌤 Погода", "📰 Новости",
-    "📊 Отчёт", "❓ Помощь",
+    "📊 Отчёт", "❓ Помощь", "⚙️ Настройки",
 }
 
 # Button text → handler mapping for instant routing when pressed during FSM
@@ -1788,6 +1789,7 @@ _BUTTON_HANDLERS.update({
     "🌤 Погода": lambda msg, st: btn_weather(msg, st),
     "📊 Отчёт": lambda msg, st: cmd_report(msg),
     "❓ Помощь": lambda msg, st: cmd_help(msg),
+    "⚙️ Настройки": lambda msg, st: cmd_settings(msg, st),
 })
 
 
