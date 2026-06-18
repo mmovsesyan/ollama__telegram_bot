@@ -462,8 +462,13 @@ def refresh_system_prompt(user_id: int) -> bool:
     summary_msg = _find_summary_message(chat.ollama_chat.messages)
     other_messages = [m for m in chat.ollama_chat.messages if m.role != "system"]
 
-    # The first system message is always the base prompt built by _build_system_content.
-    if chat.ollama_chat.messages and chat.ollama_chat.messages[0].role == "system":
+    # The first system message is the base prompt unless it is the previous-dialog
+    # summary marker (which can sit at index 0 if the base prompt was never built).
+    if (
+        chat.ollama_chat.messages
+        and chat.ollama_chat.messages[0].role == "system"
+        and not chat.ollama_chat.messages[0].content.startswith("[Контекст предыдущего диалога]:")
+    ):
         base_system = chat.ollama_chat.messages[0]
 
     new_system_content = _build_system_content(user_id)
