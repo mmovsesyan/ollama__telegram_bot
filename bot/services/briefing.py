@@ -73,6 +73,11 @@ def _today_local_iso(user_id: int) -> str:
     return now_in_tz(_user_tz_name(user_id)).strftime("%Y-%m-%d")
 
 
+def _user_voice_output_enabled(user_id: int) -> bool:
+    prefs = _user_prefs(user_id)
+    return bool(prefs.get("voice_output_enabled", 0))
+
+
 async def _get_weather_text(user_id: int) -> str:
     from bot.services.weather import get_weather
 

@@ -43,6 +43,7 @@ async def main() -> None:
     from bot.bot import dp
     from bot.routers import start, completion, cron, settings
     from bot.handlers import smart as smart_handler
+    from bot.handlers import voice as voice_handler
 
     # Set Telegram menu commands
     try:
@@ -60,6 +61,7 @@ async def main() -> None:
     completion.db = db
     cron.db = db
     smart_handler.db = db
+    voice_handler.db = db
     start.db = db
     settings.db = db
     from bot.intent.context import ContextBuilder
@@ -68,16 +70,18 @@ async def main() -> None:
     from bot.services import kb as kb_service
     from bot.services import rss_news as rss_news_service
     from bot.services import briefing as briefing_service
+    from bot.services import voice as voice_service
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
     briefing_service.db = db
+    voice_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE
     # smart so its button matchers (F.text == "❓ Помощь" etc.) win — smart
     # is the catch-all for everything else.
-    dp.include_routers(start.router, settings.router, cron.router, completion.router, smart_handler.router)
+    dp.include_routers(start.router, settings.router, cron.router, completion.router, voice_handler.router, smart_handler.router)
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()

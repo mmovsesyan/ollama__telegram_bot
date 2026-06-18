@@ -27,36 +27,11 @@ from bot.settings import (
     START_USER_MESSAGE,
     SUMMARY_PROMPT,
     SYSTEM_MESSAGE,
-    WHISPER_MODEL,
-    WHISPER_DEVICE,
-    WHISPER_COMPUTE_TYPE,
 )
 
 router = Router()
 
 db = None  # injected in __init__
-
-try:
-    from faster_whisper import WhisperModel
-    _WHISPER_AVAILABLE = True
-except Exception:
-    WhisperModel = None  # type: ignore[misc,assignment]
-    _WHISPER_AVAILABLE = False
-
-_whisper_model_instance: Any | None = None
-
-
-def _get_whisper_model() -> Any:
-    global _whisper_model_instance
-    if _whisper_model_instance is None:
-        if not _WHISPER_AVAILABLE or WhisperModel is None:
-            raise RuntimeError("faster-whisper is not installed.")
-        _whisper_model_instance = WhisperModel(
-            WHISPER_MODEL,
-            device=WHISPER_DEVICE,
-            compute_type=WHISPER_COMPUTE_TYPE,
-        )
-    return _whisper_model_instance
 
 
 def _escape_markdown(text: str) -> str:
@@ -861,99 +836,3 @@ async def handle_document(message: Message, state: FSMContext):
     await generate(message, user_id, prompt)
 
 
-async def _download_tg_file(file_id: str, suffix: str) -> tuple[str, str]:
-    tg_file = await aiogram_bot.get_file(file_id)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp_path = tmp.name
-    await aiogram_bot.download_file(tg_file.file_path, tmp_path)
-    return tmp_path, tg_file.file_path or ""
-
-
-async def _transcribe_audio(file_path: str) -> str:
-    model = _get_whisper_model()
-    segments, _info = model.transcribe(file_path, beam_size=5, vad_filter=True)
-    return " ".join(segment.text for segment in segments).strip()
-
-
-async def _handle_voice_or_audio(message: Message, state: FSMContext, file_id: str, suffix: str, label: str):
-    if message.from_user is None:
-        return
-    user_id = message.from_user.id
-    if not _is_allowed(user_id):
-        return
-
-    if not _WHISPER_AVAILABLE:
-        await message.answer(
-            "🎤 Распознавание голоса недоступно. Установи faster-whisper:\n"
-            "poetry install --no-dev",
-            reply_markup=command_keyboard,
-        )
-        return
-
-    status_msg = await message.answer("🎤 Слушаю и распознаю речь...")
-    tmp_path = None
-    try:
-        tmp_path, _ = await _download_tg_file(file_id, suffix)
-        text = await _transcribe_audio(tmp_path)
-    except Exception as e:
-        err_text = str(e)
-        if "ffmpeg" in err_text.lower() or "command not found" in err_text.lower():
-            await status_msg.edit_text(
-                "❌ Для распознавания голоса нужен ffmpeg.\n"
-                "macOS: brew install ffmpeg\n"
-                "Linux: sudo apt install ffmpeg"
-            )
-        else:
-            await status_msg.edit_text(f"❌ Ошибка распознавания {label}: {err_text[:200]}")
-        print(f"[VOICE] Transcription failed: {e}")
-        return
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-    if not text:
-        await status_msg.edit_text("❌ Не удалось распознать речь. Попробуй ещё раз.")
-        return
-
-    await status_msg.edit_text(f"🎤 Распознано: {text}")
-    # Treat the transcribed text as if the user typed it. Routing into the
-    # smart-handler pipeline keeps voice and text on the same path.
-    from bot.handlers.smart import smart_message_handler
-    from copy import copy
-    voice_msg = copy(message)
-    voice_msg.text = text
-    await smart_message_handler(voice_msg, state=state)
-
-
-@router.message(F.voice)
-async def handle_voice(message: Message, state: FSMContext):
-    voice = message.voice
-    if voice is None:
-        return
-    await _handle_voice_or_audio(message, state, voice.file_id, ".ogg", "голосового сообщения")
-
-
-@router.message(F.audio)
-async def handle_audio(message: Message, state: FSMContext):
-    audio = message.audio
-    if audio is None:
-        return
-    suffix = ".mp3" if (audio.file_name or "").lower().endswith(".mp3") else ".audio"
-    await _handle_voice_or_audio(message, state, audio.file_id, suffix, "аудио")
-
-
-
-@router.errors()
-async def global_error_handler(event):
-    update = event.update
-    exception = event.exception
-    print(f"[GLOBAL ERROR] {exception}")
-    if update.message:
-        try:
-            from bot.keyboards.reply import command_keyboard
-            await update.message.answer(
-                "⚠️ Произошла ошибка. Попробуй ещё раз или используй /help.",
-                reply_markup=command_keyboard,
-            )
-        except Exception as e:
-            print(f"[ERROR HANDLER FAIL] {e}")

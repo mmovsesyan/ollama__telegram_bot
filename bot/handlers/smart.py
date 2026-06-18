@@ -92,7 +92,13 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     # user/assistant messages to the DB. Avoid duplicate rows here.
     is_chat_path = intent_result.tool == "chat"
     markup = result.reply_markup if result.reply_markup is not None else command_keyboard
-    await message.answer(result.text, reply_markup=markup)
+
+    from bot.services.voice import voice_output_enabled as _voice_output_enabled
+    if _voice_output_enabled(user_id) and is_chat_path:
+        from bot.services.voice import send_voice_reply
+        await send_voice_reply(message, result.text, bot=message.bot)
+    else:
+        await message.answer(result.text, reply_markup=markup)
     _persist_exchange(user_id, text, result.text, save_messages=not is_chat_path)
 
 
