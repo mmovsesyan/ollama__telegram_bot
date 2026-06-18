@@ -21,6 +21,7 @@ from bot.states import BotStates
 from bot.settings import (
     COMPACTION_EVERY_N,
     MAX_CONTEXT_MESSAGES,
+    MAX_CONTEXT_TOKENS,
     OLLAMA_MODEL,
     OLLAMA_MODEL_TEMPERATURE,
     START_USER_MESSAGE,
@@ -266,7 +267,6 @@ async def generate(message: Message, user_id: int, text: str):
 
 
 def _trim_context(chat: UserChat) -> None:
-    MAX_CONTEXT_TOKENS = 4000
     system_messages = [m for m in chat.ollama_chat.messages if m.role == "system"]
     other_messages = [m for m in chat.ollama_chat.messages if m.role != "system"]
 
@@ -410,6 +410,87 @@ def _delete_chat(user_id: int) -> None:
     del chats[user_id]
 
 
+def _build_system_content(user_id: int) -> str:
+    """Build the dynamic system prompt: base message + notes + memories.
+
+    Kept as a pure function so it can be reused when refreshing a live chat
+    after a new note/memory is saved."""
+    system_content = SYSTEM_MESSAGE
+    if db is None:
+        return system_content
+
+    notes = db.get_notes(user_id)
+    if notes:
+        system_content += f"\n\nКонтекст о пользователе:\n{notes}"
+
+    memories = db.get_memories(user_id)
+    if memories:
+        memory_lines = []
+        for m in memories:
+            cat = m.get('category', 'fact')
+            content = m.get('content', '')
+            summary = m.get('summary')
+            display = summary if summary else content
+            memory_lines.append(f"- [{cat}] {display}")
+        system_content += "\n\nВажные факты и предпочтения:\n" + "\n".join(memory_lines)
+
+    return system_content
+
+
+def _find_summary_message(messages: list[OllamaChatMessage]) -> OllamaChatMessage | None:
+    """Return the first non-base system message that carries a previous-dialog
+    summary marker, or None if absent."""
+    for m in messages:
+        if m.role == "system" and m.content.startswith("[Контекст предыдущего диалога]:"):
+            return m
+    return None
+
+
+def refresh_system_prompt(user_id: int) -> bool:
+    """Reload notes/memories into an active chat's system prompt in-place.
+
+    Called after any action that updates persistent user context (notes,
+    memories, auto-extracted facts) so the next LLM call already knows the
+    new information without requiring /clear or session timeout.
+
+    Preserves the base system message and any previous-dialog summary."""
+    chat = chats.get(user_id)
+    if chat is None or db is None:
+        return False
+
+    base_system = None
+    summary_msg = _find_summary_message(chat.ollama_chat.messages)
+    other_messages = [m for m in chat.ollama_chat.messages if m.role != "system"]
+
+    # The first system message is always the base prompt built by _build_system_content.
+    if chat.ollama_chat.messages and chat.ollama_chat.messages[0].role == "system":
+        base_system = chat.ollama_chat.messages[0]
+
+    new_system_content = _build_system_content(user_id)
+    if base_system is None:
+        chat.ollama_chat.messages.insert(
+            0, OllamaChatMessage(role="system", content=new_system_content)
+        )
+    else:
+        base_system.content = new_system_content
+
+    # Ensure summary sits right after the base system prompt.
+    if summary_msg is not None:
+        # Re-insert if it got dropped during rebuild.
+        if summary_msg not in chat.ollama_chat.messages:
+            chat.ollama_chat.messages.insert(1, summary_msg)
+        else:
+            # Move to position 1 if not already there.
+            idx = chat.ollama_chat.messages.index(summary_msg)
+            if idx != 1:
+                chat.ollama_chat.messages.pop(idx)
+                chat.ollama_chat.messages.insert(1, summary_msg)
+
+    # Trim in case refreshing pushed us over budget.
+    _trim_context(chat)
+    return True
+
+
 def _create_chat(user_id: int) -> bool:
     if user_id in chats:
         return False
@@ -428,21 +509,7 @@ def _create_chat(user_id: int) -> bool:
         session_id=session_id,
     )
 
-    system_content = SYSTEM_MESSAGE
-    if db:
-        notes = db.get_notes(user_id)
-        if notes:
-            system_content += f"\n\nКонтекст о пользователе:\n{notes}"
-
-        memories = db.get_memories(user_id)
-        if memories:
-            memory_lines = []
-            for m in memories:
-                cat = m.get('category', 'fact')
-                content = m.get('content', '')
-                memory_lines.append(f"- [{cat}] {content}")
-            system_content += "\n\nВажные факты и предпочтения:\n" + "\n".join(memory_lines)
-
+    system_content = _build_system_content(user_id)
     if system_content:
         chats[user_id].ollama_chat.messages.append(
             OllamaChatMessage(role="system", content=system_content)

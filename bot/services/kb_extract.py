@@ -235,6 +235,13 @@ async def extract_facts_from_exchange(
             logger.warning("[KB EXTRACT] add_memory failed: %s", e)
     if saved:
         logger.info("[KB EXTRACT] saved %d new memories for user_id=%s", saved, user_id)
+        # Refresh the active chat's system prompt so auto-extracted facts are
+        # visible in the current session without a restart or /clear.
+        try:
+            from bot.routers import completion
+            completion.refresh_system_prompt(user_id)
+        except Exception:
+            pass
     return saved
 
 

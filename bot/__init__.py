@@ -59,10 +59,14 @@ async def main() -> None:
     cron.db = db
     smart_handler.db = db
     start.db = db
+    from bot.intent.context import ContextBuilder
+    ContextBuilder.db = db
     from bot.services import reminders as reminders_service
     from bot.services import kb as kb_service
+    from bot.services import rss_news as rss_news_service
     reminders_service.db = db
     kb_service.db = db
+    rss_news_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE

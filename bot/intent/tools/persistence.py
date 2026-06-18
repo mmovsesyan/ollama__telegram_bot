@@ -13,6 +13,7 @@ class NoteTool(BaseTool):
         if context.db is None:
             return ToolResult(text="База данных недоступна.", success=False)
         context.db.add_note(context.user_id, content)
+        _refresh_active_chat_system_prompt(context.user_id)
         return ToolResult(text=f"✅ Заметка сохранена.\n\n📝 {content}")
 
 
@@ -30,10 +31,22 @@ class MemoryTool(BaseTool):
         from bot.routers.cron import _classify_memory
         category = await _classify_memory(content)
         mid = context.db.add_memory(context.user_id, category, content)
+        _refresh_active_chat_system_prompt(context.user_id)
         cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
         return ToolResult(
             text=f"✅ Сохранено: {cat_names.get(category, category)}\n#{mid} | {content}",
         )
+
+
+def _refresh_active_chat_system_prompt(user_id: int) -> None:
+    """Best-effort refresh of the live chat's system prompt after mutating
+    notes or memories. The import is deferred to avoid circular imports at
+    module load time."""
+    try:
+        from bot.routers import completion
+        completion.refresh_system_prompt(user_id)
+    except Exception:
+        pass
 
 
 class MonitorTool(BaseTool):

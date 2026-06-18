@@ -56,6 +56,21 @@ Analyze the user's message and choose the best intent and tool from the availabl
 Available intents: {intents}
 Available tools: {tools}
 
+Routing hints:
+- "запомни / факт / я люблю / я работаю над" → add_memory + memory tool.
+- "заметка / запиши заметку" → add_note + note tool.
+- "напомни / напоминание" → create_reminder + remind tool.
+- "задача / поставь задачу / каждый день в ..." → create_task + task tool.
+- "погода в <город>" → weather.
+- "поищи / найди / новости" → search or news.
+- "что я говорил про X / найди у меня про X / из моей базы" → kb_search.
+- Free-form chat or questions about the user's own facts → chat.
+
+If the message clearly refers to the user's own stored facts or previous
+dialogue, prefer kb_search (for "what did I say about X") or chat (for
+personalized follow-ups). Use the provided recent_messages and
+relevant_memory to disambiguate.
+
 Respond ONLY with a single JSON object matching this schema:
 {schema}
 

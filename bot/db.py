@@ -157,6 +157,16 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
                 CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(enabled, trigger_at);
                 CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id, enabled);
+
+                CREATE TABLE IF NOT EXISTS shown_news (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT,
+                    shown_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, url)
+                );
+                CREATE INDEX IF NOT EXISTS idx_shown_news_user ON shown_news(user_id, shown_at);
             """)
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
@@ -513,3 +523,29 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             conn.commit()
+
+    def is_news_shown(self, user_id: int, url: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM shown_news WHERE user_id = ? AND url = ? LIMIT 1",
+                (user_id, url)
+            )
+            return cursor.fetchone() is not None
+
+    def mark_news_shown(self, user_id: int, url: str, title: str | None = None):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO shown_news (user_id, url, title) VALUES (?, ?, ?)",
+                (user_id, url, title)
+            )
+            conn.commit()
+
+    def cleanup_old_shown_news(self, days: int = 30) -> int:
+        """Prune shown-news history older than `days` to keep the table small."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM shown_news WHERE shown_at < datetime('now', ?)",
+                (f"-{days} days",)
+            )
+            conn.commit()
+            return cursor.rowcount

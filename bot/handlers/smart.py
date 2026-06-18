@@ -83,19 +83,34 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     # (e.g. RemindTool, TaskTool — _process_remind/_process_task_from_text
     # already replied via aiogram_bot.send_message).
     if not result.text and result.success:
-        _persist_exchange(user_id, text, "")
+        # For non-chat tools we still save the exchange and try to extract facts
+        # from any assistant reply that is already in the chat context.
+        _persist_exchange(user_id, text, "", save_messages=True)
         return
 
+    # ChatTool streams through completion.generate(), which already saves
+    # user/assistant messages to the DB. Avoid duplicate rows here.
+    is_chat_path = intent_result.tool == "chat"
     markup = result.reply_markup if result.reply_markup is not None else command_keyboard
     await message.answer(result.text, reply_markup=markup)
-    _persist_exchange(user_id, text, result.text)
+    _persist_exchange(user_id, text, result.text, save_messages=not is_chat_path)
 
 
-def _persist_exchange(user_id: int, user_text: str, assistant_text: str) -> None:
-    """Save a smart-pipeline exchange to the messages table so the LLM has
-    context across tool calls. Without this, free-form chats forget the user
-    just asked for weather / set a reminder / saved a note. Also kicks off
-    a fire-and-forget LLM extraction job that adds salient facts to the KB.
+def _persist_exchange(
+    user_id: int,
+    user_text: str,
+    assistant_text: str,
+    *,
+    save_messages: bool = True,
+) -> None:
+    """Persist a smart-pipeline exchange and refresh in-memory context.
+
+    - For chat/free-form paths the messages are already saved by
+      completion.generate() when ChatTool streams a reply, so this function
+      only extracts facts. For other tools (remind, task, weather, ...) it
+      also stores the exchange so the next LLM call has continuity.
+    - After persisting, refreshes the active chat's system prompt so newly
+      saved notes/memories are visible immediately.
     """
     if db is None:
         return
@@ -104,17 +119,32 @@ def _persist_exchange(user_id: int, user_text: str, assistant_text: str) -> None
         completion._create_chat(user_id)
         chat = completion.chats.get(user_id)
         if chat and chat.session_id:
-            db.save_message(user_id, chat.session_id, "user", user_text, chat.selected_model)
-            if assistant_text:
-                db.save_message(user_id, chat.session_id, "assistant", assistant_text, chat.selected_model)
+            if save_messages:
+                db.save_message(user_id, chat.session_id, "user", user_text, chat.selected_model)
+                if assistant_text:
+                    db.save_message(user_id, chat.session_id, "assistant", assistant_text, chat.selected_model)
+
+        # Use the actual streamed assistant reply when the caller passed an
+        # empty placeholder (ChatTool returns empty text after streaming).
+        effective_assistant = assistant_text
+        if not effective_assistant and chat and chat.ollama_chat.messages:
+            for m in reversed(chat.ollama_chat.messages):
+                if m.role == "assistant":
+                    effective_assistant = m.content
+                    break
+
         # Fire-and-forget fact extraction. Cheap LLM call, runs in background
         # so the user's response isn't delayed. Errors are silent.
-        if assistant_text:
+        if effective_assistant:
             import asyncio as _asyncio
             from bot.services.kb_extract import extract_facts_from_exchange
             _asyncio.create_task(
-                extract_facts_from_exchange(db, user_id, user_text, assistant_text)
+                extract_facts_from_exchange(db, user_id, user_text, effective_assistant)
             )
+
+        # Refresh the system prompt in the active chat so new memories/notes
+        # are picked up immediately.
+        completion.refresh_system_prompt(user_id)
     except Exception:
         logger.exception("Failed to persist smart-pipeline exchange for user_id=%s", user_id)
 

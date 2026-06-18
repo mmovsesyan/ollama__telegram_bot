@@ -41,8 +41,40 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", default="default")  # i
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 
+# Soft token budget for the non-system part of the active chat context.
+# Increase this for large-context models (e.g. kimi-k2.7-code:cloud).
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", default="16000"))
+
 # Compaction: summarize every N user+assistant messages
 COMPACTION_EVERY_N = int(os.getenv("COMPACTION_EVERY_N", default="8"))
+
+# News aggregator settings
+# Default RSS feeds for the /news command. Comma-separated list of feed URLs.
+DEFAULT_RSS_FEEDS = os.getenv(
+    "DEFAULT_RSS_FEEDS",
+    default="https://habr.com/ru/rss/articles/top/,"
+            "https://vc.ru/rss/all,"
+            "https://www.cnews.ru/inc/rss/news.xml,"
+            "https://tadviser.ru/rss/news,"
+            "https://www.iguides.ru/main/rss/mainarticles.xml,"
+            "https://lenta.ru/rss/news/it,"
+            "https://www.rbc.ru/technology/?utm_source=topline_rbc",
+)
+RSS_FEEDS = [u.strip() for u in DEFAULT_RSS_FEEDS.split(",") if u.strip()]
+
+# How far back to look for RSS news (hours)
+RSS_NEWS_HOURS = int(os.getenv("RSS_NEWS_HOURS", default="48"))
+
+# Web-search provider for fallback when RSS has no fresh news.
+# Supported: "ollama", "duckduckgo", "searxng"
+WEB_SEARCH_PROVIDER = os.getenv("WEB_SEARCH_PROVIDER", default="duckduckgo").lower()
+SEARXNG_URL = os.getenv("SEARXNG_URL", default="").rstrip("/")
+
+# Region / language for DuckDuckGo (e.g. "ru-ru", "us-en")
+DUCKDUCKGO_REGION = os.getenv("DUCKDUCKGO_REGION", default="ru-ru")
+
+# Preferred news language for filtering and display
+NEWS_LANGUAGE = os.getenv("NEWS_LANGUAGE", default="ru")
 
 # Prompt used for summarization
 SUMMARY_PROMPT = os.getenv(

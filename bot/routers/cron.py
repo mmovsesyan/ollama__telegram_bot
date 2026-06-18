@@ -323,6 +323,16 @@ async def _classify_memory(content: str) -> str:
     return "note"
 
 
+def _refresh_completion_system_prompt(user_id: int) -> None:
+    """Best-effort refresh of the live chat's system prompt after the user
+    saves a note or memory via cron handlers."""
+    try:
+        from bot.routers import completion
+        completion.refresh_system_prompt(user_id)
+    except Exception:
+        pass
+
+
 # --- Reminders ---
 
 @router.message(lambda m: m.text and (m.text == "/remind" or m.text.startswith("/remind ")))
@@ -833,6 +843,7 @@ async def cmd_note(message: Message, state: FSMContext):
         return
 
     db.add_note(message.from_user.id, parts[1])
+    _refresh_completion_system_prompt(message.from_user.id)
     await message.answer(
         f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {parts[1]}",
         reply_markup=command_keyboard,
@@ -870,6 +881,7 @@ async def process_note(message: Message, state: FSMContext):
         await state.clear()
         return
     db.add_note(message.from_user.id, message.text)
+    _refresh_completion_system_prompt(message.from_user.id)
     await message.answer(
         f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {message.text}",
         reply_markup=command_keyboard,
@@ -1224,6 +1236,7 @@ async def cmd_memory_add(message: Message, state: FSMContext):
             category = "fact"
 
     mid = db.add_memory(message.from_user.id, category, content)
+    _refresh_completion_system_prompt(message.from_user.id)
     cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
     await message.answer(
         f"✅ Сохранено: {cat_names.get(category, category)}\n"
@@ -1285,6 +1298,7 @@ async def process_memory_add(message: Message, state: FSMContext):
         category = "note"
 
     mid = db.add_memory(message.from_user.id, category, content)
+    _refresh_completion_system_prompt(message.from_user.id)
     await message.answer(
         f"✅ Сохранено: {cat_names.get(category, category)}\n"
         f"#{mid} | {content}",
@@ -1701,6 +1715,7 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
         return
 
     mid = db.add_memory(callback.from_user.id, category, content)
+    _refresh_completion_system_prompt(callback.from_user.id)
     await callback.message.answer(
         f"✅ Сохранено: {cat_names.get(category, category)}\n"
         f"#{mid} | {content}",
@@ -1953,47 +1968,61 @@ async def _process_kb(message: Message, query: str):
 
 # --- News ---
 
+def _format_search_results(query: str, items: list[dict]) -> str:
+    """Render Ollama web-search results in the same clean style as RSS news."""
+    text = f"🔍 {query}\n\n"
+    for i, item in enumerate(items[:5], 1):
+        title = item.get("title", "Без названия").strip()
+        url = item.get("url", "").strip()
+        snippet = _extract_main_text(item.get("content", ""), max_len=220)
+        source = ""
+        if url:
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc.replace("www.", "")
+                if domain:
+                    source = f"🌐 {domain}"
+            except Exception:
+                pass
+
+        text += f"{i}. {title}\n"
+        if source:
+            text += f"   {source}\n"
+        if snippet:
+            text += f"   {snippet}\n"
+        if url:
+            text += f"   🔗 {url}\n"
+        text += "\n"
+    return text[:4096]
+
+
 async def _process_news(message: Message, topic: str | None = None):
-    """Run a news web-search. With a topic, search for that topic; without
-    a topic, fall back to the generic 'последние новости сегодня'."""
-    query = topic.strip() if topic and topic.strip() else "последние новости сегодня"
+    """Fetch fresh news: RSS-first, then web-search fallback.
+
+    RSS gives us curated, recent sources; if nothing matches the topic or
+    the feeds are stale we fall back to DuckDuckGo/SearXNG/Ollama depending on
+    the WEB_SEARCH_PROVIDER setting.
+    """
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
     label = topic.strip() if topic and topic.strip() else "топ-новости"
     await message.answer(f"📰 Ищу новости: {label}...")
 
-    result, error = await ollama_web_search(query, max_results=5)
-    if error:
-        await message.answer(f"❌ {error}", reply_markup=command_keyboard)
-        return
-
-    items = (result or {}).get("results", [])
-    if not items:
+    from bot.services.rss_news import get_fresh_news
+    text, items, source = await get_fresh_news(user_id, topic=topic, limit=5)
+    if not text:
         await message.answer(
             f"Новостей по запросу «{label}» не найдено.",
             reply_markup=command_keyboard,
         )
         return
 
-    text = f"📰 {label}:\n\n"
-    for i, item in enumerate(items[:5], 1):
-        title = item.get("title", "Без названия")
-        url = item.get("url", "")
-        source = ""
-        if url:
-            try:
-                from urllib.parse import urlparse
-                domain = urlparse(url).netloc.replace("www.", "")
-                source = f" ({domain})"
-            except Exception:
-                pass
-        snippet = _extract_main_text(item.get("content", ""), max_len=200)
-        text += f"{i}. {title}{source}\n"
-        if snippet:
-            text += f"   {snippet}\n"
-        if url:
-            text += f"   {url}\n"
-        text += "\n"
-
-    await message.answer(text[:4096], reply_markup=command_keyboard)
+    footer = f"\n\n(источник: {source})" if source else ""
+    full_text = text + footer
+    if len(full_text) > 4096:
+        full_text = full_text[:4090] + "..."
+    await message.answer(full_text, reply_markup=command_keyboard)
 
 
 @router.message(lambda m: m.text and m.text.startswith("/news"))
@@ -2107,29 +2136,8 @@ async def _process_search(message: Message, query: str):
         await message.answer("Ничего не найдено.", reply_markup=command_keyboard)
         return
 
-    text = f"🔍 {query}\n\n"
-    for i, item in enumerate(items[:5], 1):
-        title = item.get("title", "Без названия")
-        url = item.get("url", "")
-        snippet = _extract_main_text(item.get("content", ""), max_len=200)
-        source = ""
-        if url:
-            try:
-                from urllib.parse import urlparse
-                domain = urlparse(url).netloc.replace("www.", "")
-                if domain:
-                    source = f" ({domain})"
-            except Exception:
-                pass
-
-        text += f"{i}. {title}{source}\n"
-        if snippet:
-            text += f"   {snippet}\n"
-        if url:
-            text += f"   {url}\n"
-        text += "\n"
-
-    await message.answer(text[:4096], reply_markup=command_keyboard)
+    text = _format_search_results(query, items)
+    await message.answer(text, reply_markup=command_keyboard)
 
 
 @router.message(BotStates.waiting_search)

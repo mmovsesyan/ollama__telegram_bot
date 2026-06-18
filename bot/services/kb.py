@@ -1,6 +1,7 @@
 """Knowledge base search: full-text over user's memories with web fallback."""
 
 from typing import Any
+from urllib.parse import urlparse
 
 # Forward-declared db reference; set by bot.__init__ at startup.
 db: Any = None
@@ -18,8 +19,7 @@ def _format_hit(hit: dict, idx: int) -> str:
 def render_kb_results(query: str, hits: list[dict]) -> str:
     if not hits:
         return ""
-    lines = [f"📚 Из твоей базы по запросу «{query}»:"]
-    lines.append("")
+    lines = [f"📚 Из твоей базы по запросу «{query}»:", ""]
     for i, hit in enumerate(hits, 1):
         lines.append(_format_hit(hit, i))
     return "\n".join(lines)
@@ -30,6 +30,31 @@ def search_kb(user_id: int, query: str, limit: int = 5) -> list[dict]:
     if db is None:
         return []
     return db.search_memories(user_id, query, limit=limit)
+
+
+def _format_web_fallback_item(item: dict, idx: int) -> str:
+    """Format a web result in the same clean style as search/news."""
+    title = item.get("title", "Без названия").strip()
+    url = item.get("url", "").strip()
+    body = item.get("body") or item.get("content") or item.get("snippet", "")
+    snippet = body.strip().replace("\n", " ")
+    if len(snippet) > 220:
+        snippet = snippet[:220].rsplit(" ", 1)[0] + "..."
+    source = ""
+    if url:
+        try:
+            source = f"🌐 {urlparse(url).netloc.replace('www.', '')}"
+        except Exception:
+            pass
+
+    lines = [f"{idx}. {title}"]
+    if source:
+        lines.append(f"   {source}")
+    if snippet:
+        lines.append(f"   {snippet}")
+    if url:
+        lines.append(f"   🔗 {url}")
+    return "\n".join(lines)
 
 
 async def search_kb_with_web_fallback(
@@ -52,7 +77,7 @@ async def search_kb_with_web_fallback(
 
     # KB empty — fall back to web search via the existing helper.
     try:
-        from bot.routers.cron import _extract_main_text, ollama_web_search
+        from bot.routers.cron import ollama_web_search
     except Exception:
         return "", [], False
 
@@ -65,16 +90,8 @@ async def search_kb_with_web_fallback(
     if not items:
         return "", [], True
 
-    lines = ["📚 В твоей базе ничего не нашёл, посмотрел в интернете:"]
-    lines.append("")
+    lines = ["📚 В твоей базе ничего не нашёл, посмотрел в интернете:", ""]
     for i, item in enumerate(items[:limit], 1):
-        title = item.get("title", "Без названия")
-        url = item.get("url", "")
-        snippet = _extract_main_text(item.get("content", ""), max_len=200)
-        lines.append(f"{i}. {title}")
-        if snippet:
-            lines.append(f"   {snippet}")
-        if url:
-            lines.append(f"   {url}")
+        lines.append(_format_web_fallback_item(item, i))
         lines.append("")
     return "\n".join(lines)[:4096], [], True
