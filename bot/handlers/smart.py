@@ -101,6 +101,21 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         await message.answer(result.text, reply_markup=markup)
     _persist_exchange(user_id, text, result.text, save_messages=not is_chat_path)
 
+    # Background smart-reminder suggestion after enough chat turns.
+    try:
+        from bot.services import reminder_suggest as reminder_suggest_service
+        reminder_suggest_service.record_interaction(user_id)
+        if reminder_suggest_service.should_analyze(user_id):
+            import asyncio as _asyncio
+            _asyncio.create_task(
+                reminder_suggest_service.analyze_and_suggest(
+                    user_id,
+                    lambda msg, **kwargs: message.answer(msg, **kwargs),
+                )
+            )
+    except Exception:
+        logger.exception("Smart reminder suggestion failed for user_id=%s", user_id)
+
 
 def _persist_exchange(
     user_id: int,

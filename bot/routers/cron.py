@@ -2239,6 +2239,45 @@ async def cmd_forget_doc(message: Message, state: FSMContext):
         await message.answer("⚠️ Не удалось удалить документ.", reply_markup=command_keyboard)
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith("suggest:"))
+async def cb_suggest(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not callback.from_user:
+        return
+    user_id = callback.from_user.id
+    if not _is_allowed(user_id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
+
+    data = callback.data
+    if data == "suggest:dismiss":
+        await callback.message.edit_text("👌 Хорошо, не сохраняю.")
+        await callback.answer("Отклонено")
+        return
+
+    from bot.services import reminder_suggest as reminder_suggest_service
+    parts = data.split(":", 4)
+    if len(parts) < 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    _prefix, item_type, _idx = parts[0], parts[1], parts[2]
+    content = parts[3] if len(parts) > 3 else ""
+    time_text = parts[4] if len(parts) > 4 else ""
+
+    if item_type == "reminder":
+        result = await reminder_suggest_service.create_reminder(user_id, content, time_text)
+    elif item_type == "task":
+        result = await reminder_suggest_service.create_task(user_id, content, time_text)
+    else:
+        result = await reminder_suggest_service.create_note(user_id, content)
+
+    await callback.message.edit_text(result, reply_markup=command_keyboard)
+    await callback.answer("Сохранено")
+
+
 # --- Search ---
 
 @router.message(lambda m: m.text and m.text.startswith("/search"))

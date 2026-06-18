@@ -44,6 +44,12 @@ DOCUMENT_CHUNK_SIZE = int(os.getenv("DOCUMENT_CHUNK_SIZE", default="1500"))
 DOCUMENT_CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", default="200"))
 DOCUMENT_MAX_SUMMARY_CHARS = int(os.getenv("DOCUMENT_MAX_SUMMARY_CHARS", default="8000"))
 
+# Smart reminder suggestion settings
+SMART_REMINDERS_ENABLED = os.getenv("SMART_REMINDERS_ENABLED", default="1") == "1"
+SMART_REMINDERS_COOLDOWN_MIN = int(os.getenv("SMART_REMINDERS_COOLDOWN_MIN", default="5"))
+SMART_REMINDERS_MESSAGE_THRESHOLD = int(os.getenv("SMART_REMINDERS_MESSAGE_THRESHOLD", default="10"))
+SMART_REMINDERS_CONFIDENCE = float(os.getenv("SMART_REMINDERS_CONFIDENCE", default="0.7"))
+
 # Chat context limit (number of last messages to keep, excluding system)
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", default="20"))
 

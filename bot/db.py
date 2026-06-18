@@ -74,6 +74,10 @@ class Database:
                 conn.execute("ALTER TABLE user_prefs ADD COLUMN last_briefing_date TEXT")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN smart_reminders_enabled INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,6 +114,7 @@ class Database:
                     voice_output_enabled INTEGER DEFAULT 0,
                     briefing_city TEXT,
                     last_briefing_date TEXT,
+                    smart_reminders_enabled INTEGER DEFAULT 1,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 

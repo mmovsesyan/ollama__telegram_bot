@@ -42,6 +42,7 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
     briefing_on = bool(prefs.get("briefing_enabled", 1))
     proactive_on = bool(prefs.get("proactive_enabled", 1))
     voice_on = bool(prefs.get("voice_output_enabled", 0))
+    smart_reminders_on = bool(prefs.get("smart_reminders_enabled", 1))
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -66,6 +67,12 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
                 ),
             ],
             [
+                InlineKeyboardButton(
+                    text=f"🧠 Умные напоминания: {_bool_label(smart_reminders_on)}",
+                    callback_data="settings:toggle_smart_reminders",
+                ),
+            ],
+            [
                 InlineKeyboardButton(text="❌ Закрыть", callback_data="settings:close"),
             ],
         ]
@@ -80,6 +87,7 @@ def _settings_text(prefs: dict) -> str:
         f"📰 Категории: {prefs.get('news_categories', 'tech,markets,ai')}\n"
         f"🏙 Город: {prefs.get('briefing_city') or briefing_service._default_city_for_tz(prefs.get('timezone'))}\n"
         f"🔕 Проактивность: {_bool_label(prefs.get('proactive_enabled', 1))}\n"
+        f"🧠 Умные напоминания: {_bool_label(prefs.get('smart_reminders_enabled', 1))}\n"
         f"🗣 Голосовой ответ: {_bool_label(prefs.get('voice_output_enabled', 0))}"
     )
 
@@ -171,6 +179,27 @@ async def cb_toggle_voice(callback: CallbackQuery):
     except Exception:
         pass
     await callback.answer(f"Голосовой ответ {_bool_label(new_val)}")
+
+
+@router.callback_query(F.data == "settings:toggle_smart_reminders")
+async def cb_toggle_smart_reminders(callback: CallbackQuery):
+    if not callback.from_user:
+        return
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
+    prefs = _user_prefs(callback.from_user.id)
+    new_val = 0 if prefs.get("smart_reminders_enabled", 1) else 1
+    db.set_user_prefs(callback.from_user.id, smart_reminders_enabled=new_val)
+    prefs = _user_prefs(callback.from_user.id)
+    try:
+        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
+    except Exception:
+        pass
+    await callback.answer(f"Умные напоминания {_bool_label(new_val)}")
 
 
 @router.callback_query(F.data == "settings:set_time")
