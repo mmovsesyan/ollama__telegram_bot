@@ -84,6 +84,16 @@ class TestTextHelpers:
         assert _looks_russian("Hello world") is False
         assert _looks_russian("hi") is False
 
+    def test_looks_like_english_query(self):
+        from bot.services.rss_news import _looks_like_english_query
+
+        assert _looks_like_english_query("steam") is True
+        assert _looks_like_english_query("Tesla") is True
+        assert _looks_like_english_query("AI news") is True
+        assert _looks_like_english_query("игры") is False
+        assert _looks_like_english_query("биткоин") is False
+        assert _looks_like_english_query("") is False
+
 
 class TestDateParsing:
     def test_parse_rss_date_from_struct_time(self):
@@ -262,23 +272,44 @@ class TestGetFreshNews:
     @pytest.mark.asyncio
     async def test_rss_empty_uses_web_fallback(self, monkeypatch):
         fallback_item = NewsItem("Web Title", "https://web.com", "Web summary")
+        captured = {}
+
+        async def captured_web_fallback(user_id, query, limit=5, require_russian=True):
+            captured["require_russian"] = require_russian
+            return [fallback_item]
+
         monkeypatch.setattr(
             rss_module,
             "_parse_feeds",
             AsyncMock(return_value=[]),
         )
-        monkeypatch.setattr(
-            rss_module,
-            "_web_fallback",
-            AsyncMock(return_value=[fallback_item]),
-        )
+        monkeypatch.setattr(rss_module, "_web_fallback", captured_web_fallback)
         monkeypatch.setattr(rss_module, "RSS_FEEDS", ["https://feed"])
         monkeypatch.setattr(rss_module, "WEB_SEARCH_PROVIDER", "duckduckgo")
 
-        text, items, source = await get_fresh_news(2, topic="crypto", limit=5)
+        text, items, source = await get_fresh_news(2, topic="криптовалюта", limit=5)
         assert items == [fallback_item]
         assert source == "duckduckgo"
         assert "Web Title" in text
+        assert captured.get("require_russian") is True
+
+    @pytest.mark.asyncio
+    async def test_english_query_skips_russian_filter(self, monkeypatch):
+        fallback_item = NewsItem("Steam News", "https://web.com/steam", "Steam snippet")
+        captured = {}
+
+        async def captured_web_fallback(user_id, query, limit=5, require_russian=True):
+            captured["require_russian"] = require_russian
+            return [fallback_item]
+
+        monkeypatch.setattr(rss_module, "_parse_feeds", AsyncMock(return_value=[]))
+        monkeypatch.setattr(rss_module, "_web_fallback", captured_web_fallback)
+        monkeypatch.setattr(rss_module, "RSS_FEEDS", ["https://feed"])
+        monkeypatch.setattr(rss_module, "WEB_SEARCH_PROVIDER", "duckduckgo")
+
+        text, items, source = await get_fresh_news(2, topic="steam", limit=5)
+        assert items == [fallback_item]
+        assert captured.get("require_russian") is False
 
 
 class TestWebFallback:
@@ -292,7 +323,8 @@ class TestWebFallback:
         )
         monkeypatch.setattr(rss_module, "WEB_SEARCH_PROVIDER", "duckduckgo")
 
-        items = await _web_fallback(1, "query", limit=5)
+        # English/brand queries bypass the Russian-language filter.
+        items = await _web_fallback(1, "query", limit=5, require_russian=False)
         assert len(items) == 1
         assert items[0].title == "DDG News"
         assert items[0].url == "https://ddg.com/n"
@@ -312,6 +344,19 @@ class TestWebFallback:
         )
         monkeypatch.setattr(rss_module, "WEB_SEARCH_PROVIDER", "duckduckgo")
 
-        items = await _web_fallback(1, "q", limit=5)
+        items = await _web_fallback(1, "q", limit=5, require_russian=False)
         assert len(items) == 1
         assert items[0].title == "Text"
+
+    @pytest.mark.asyncio
+    async def test_web_fallback_filters_english_results_when_russian_required(self, monkeypatch):
+        result = {"title": "DDG News", "url": "https://ddg.com/n", "body": "body text", "date": None}
+        monkeypatch.setattr(
+            rss_module,
+            "_search_duckduckgo_news",
+            AsyncMock(return_value=[result]),
+        )
+        monkeypatch.setattr(rss_module, "WEB_SEARCH_PROVIDER", "duckduckgo")
+
+        items = await _web_fallback(1, "query", limit=5, require_russian=True)
+        assert len(items) == 0
