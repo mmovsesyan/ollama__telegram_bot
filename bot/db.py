@@ -90,6 +90,10 @@ class Database:
                 conn.execute("ALTER TABLE user_prefs ADD COLUMN last_digest_date TEXT")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN retention_days INTEGER DEFAULT 90")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +134,7 @@ class Database:
                     digest_enabled INTEGER DEFAULT 0,
                     digest_time TEXT DEFAULT '20:00',
                     last_digest_date TEXT,
+                    retention_days INTEGER DEFAULT 90,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -806,3 +811,55 @@ class Database:
             cursor = conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    def get_old_documents(self, before_utc_iso: str) -> list[dict]:
+        """Return documents with created_at older than the cutoff."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM documents WHERE created_at < ?",
+                (before_utc_iso,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def cleanup_old_documents(self, before_utc_iso: str) -> int:
+        """Delete documents older than cutoff and their FTS chunks.
+
+        Returns the number of rows removed. Files are removed by the caller
+        so path logging survives the DB transaction."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM documents WHERE created_at < ?",
+                (before_utc_iso,),
+            )
+            conn.execute(
+                "DELETE FROM document_chunks_fts WHERE document_id NOT IN (SELECT id FROM documents)",
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def get_old_images(self, before_utc_iso: str) -> list[dict]:
+        """Return images with created_at older than the cutoff."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM images WHERE created_at < ?",
+                (before_utc_iso,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def cleanup_old_images(self, before_utc_iso: str) -> int:
+        """Delete images older than cutoff. Returns row count."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM images WHERE created_at < ?",
+                (before_utc_iso,),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def get_all_user_ids(self) -> list[int]:
+        """Return every user_id that appears in user_prefs."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT user_id FROM user_prefs")
+            return [row[0] for row in cursor.fetchall()]

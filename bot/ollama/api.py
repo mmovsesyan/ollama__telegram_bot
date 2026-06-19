@@ -14,6 +14,7 @@ from typing import Any, AsyncGenerator, Optional
 
 import aiohttp
 
+from bot.services.ollama_semaphore import ollama_semaphore
 from bot.settings import OLLAMA_API_HOST, OLLAMA_API_KEY, OLLAMA_KEEP_ALIVE
 
 from .dto import (
@@ -251,16 +252,17 @@ async def generate_raw_chat_completion(
     **ollama_options: Any,
 ) -> AsyncGenerator[dict[str, Any], Any]:
     options = dict(ollama_options)
-    async with _session() as session:
-        try:
-            async for segment in _stream_ollama_chat(session, messages, model, options):
-                yield segment
-            return
-        except Exception as e:
-            logger.warning(f"Ollama /api/chat failed, trying OpenAI-compatible: {e}")
+    async with ollama_semaphore:
+        async with _session() as session:
+            try:
+                async for segment in _stream_ollama_chat(session, messages, model, options):
+                    yield segment
+                return
+            except Exception as e:
+                logger.warning(f"Ollama /api/chat failed, trying OpenAI-compatible: {e}")
 
-        async for segment in _stream_openai_chat(session, messages, model, options):
-            yield segment
+            async for segment in _stream_openai_chat(session, messages, model, options):
+                yield segment
 
 
 async def generate_chat_completion(

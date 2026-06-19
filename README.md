@@ -32,9 +32,12 @@ With long-term memory, reminders, web search, site monitoring, and voice recogni
 | 🌤 **Weather** | wttr.in with Open-Meteo fallback, in your timezone |
 | 📰 **News** | By topic ("AI", "Tesla") or general top headlines |
 | 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
-| 📄 **Files** | Text extraction from PDF, DOCX, XLSX, CSV, TXT, JSON, MD and more |
+| 📄 **Files** | Text extraction from PDF, DOCX, XLSX, CSV, TXT, JSON, MD and more. Reply to the summary to ask questions about the document |
+| 📷 **Photo Q&A** | Send a photo, get a description + OCR, then reply to ask questions about that specific image |
+| 🧹 **Retention** | Old documents and photos are auto-deleted after 90 days (configurable). Manual `/cleanup` available |
 | 🌍 **Localization** | Bot asks for name and country on first launch, all times shown in your timezone |
 | ✏️ **Editing** | Edit reminder/task text or time directly in Telegram |
+| ✅ **Smart completion** | Say «готово», «сделал» or «done» about an active reminder — the bot will offer to close it |
 
 ---
 

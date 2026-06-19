@@ -21,6 +21,19 @@ logger = logging.getLogger(__name__)
 
 db: Any = None  # injected at startup by bot.__init__
 
+# Mapping of Telegram message_id -> image_id for reply-based photo Q&A.
+_image_message_map: dict[int, int] = {}
+
+
+def map_description_message(message_id: int, image_id: int) -> None:
+    """Remember that a given Telegram message contains an image description."""
+    _image_message_map[message_id] = image_id
+
+
+def image_id_for_message(message_id: int) -> int | None:
+    """Resolve an image id from a description message id (for reply-based Q&A)."""
+    return _image_message_map.get(message_id)
+
 
 def _user_images_dir(base_dir: str | Path, user_id: int) -> Path:
     path = Path(base_dir) / str(user_id) / "images"
@@ -162,6 +175,38 @@ def delete_image(image_id: int) -> bool:
         except Exception as e:
             logger.warning("[IMAGES] failed to remove file %s: %s", image["local_path"], e)
     return db.delete_image(image_id)
+
+
+async def answer_question(user_id: int, image_id: int, question: str, model: str | None = None) -> str:
+    """Answer a user question about a previously saved image using a vision model."""
+    if db is None:
+        return "⚠️ База данных недоступна."
+    image = db.get_image(image_id)
+    if not image or image.get("user_id") != user_id:
+        return "⚠️ Изображение не найдено или нет доступа."
+
+    local_path = image.get("local_path")
+    if not local_path or not Path(local_path).exists():
+        return "⚠️ Файл фото недоступен."
+
+    description = image.get("description") or ""
+    ocr_text = image.get("ocr_text") or ""
+    context_parts = []
+    if description:
+        context_parts.append(f"Описание фото: {description}")
+    if ocr_text:
+        context_parts.append(f"Текст на фото:\n{ocr_text}")
+    context = "\n\n".join(context_parts)
+
+    prompt = (
+        "Ответь на вопрос пользователя по изображению. "
+        "Используй только то, что видишь на фото. Ответь кратко и по существу на русском языке."
+    )
+    if context:
+        prompt += f"\n\nКонтекст:\n{context}"
+    prompt += f"\n\nВопрос: {question}\n\nОтвет:"
+
+    return await _vision_query(local_path, prompt, model=model)
 
 
 async def save_description_to_memory(user_id: int, image_id: int) -> str:

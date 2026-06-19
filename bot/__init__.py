@@ -21,6 +21,7 @@ COMMANDS = [
     BotCommand(command="memory", description="Показать память"),
     BotCommand(command="memory_add", description="Добавить факт в память"),
     BotCommand(command="memory_summary", description="Профиль из памяти"),
+    BotCommand(command="cleanup", description="Очистить старые файлы"),
     BotCommand(command="note", description="Сохранить заметку"),
     BotCommand(command="search", description="Поиск в интернете"),
     BotCommand(command="weather", description="Погода в городе"),
@@ -75,8 +76,10 @@ async def main() -> None:
     from bot.services import voice as voice_service
     from bot.services import news_categories as news_categories_service
     from bot.services import reminder_suggest as reminder_suggest_service
+    from bot.services import reminder_completion as reminder_completion_service
     from bot.services import images as images_service
     from bot.services import digest as digest_service
+    from bot.services import retention as retention_service
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
@@ -85,8 +88,10 @@ async def main() -> None:
     news_categories_service.db = db
     reminder_suggest_service.db = db
     reminder_suggest_service.reminders_service = reminders_service
+    reminder_completion_service.db = db
     images_service.db = db
     digest_service.db = db
+    retention_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE
@@ -295,11 +300,18 @@ async def main() -> None:
             await digest_service.send_digest(prefs["user_id"], aiogram_bot)
             db.update_digest_sent(prefs["user_id"], today_str)
 
+    async def check_retention():
+        if db is None:
+            return
+        from bot.services import retention as retention_service
+        retention_service.cleanup_all_retention()
+
     scheduler.add_job(check_reminders, IntervalTrigger(seconds=30), id="reminders", replace_existing=True)
     scheduler.add_job(check_monitors, IntervalTrigger(seconds=60), id="monitors", replace_existing=True)
     scheduler.add_job(cleanup_sessions, IntervalTrigger(minutes=30), id="cleanup", replace_existing=True)
     scheduler.add_job(check_briefings, IntervalTrigger(minutes=1), id="briefing", replace_existing=True)
     scheduler.add_job(check_digests, IntervalTrigger(minutes=1), id="digest", replace_existing=True)
+    scheduler.add_job(check_retention, IntervalTrigger(hours=24), id="retention", replace_existing=True)
     scheduler.start()
 
     print(f"[OLLAMA] Selected base model -> {OLLAMA_MODEL}")

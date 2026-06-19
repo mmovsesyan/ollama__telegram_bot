@@ -1321,6 +1321,26 @@ async def cmd_memory_summary(message: Message, state: FSMContext):
     await _send_memory_summary(message.from_user.id, message)
 
 
+@router.message(lambda m: m.text and (m.text == "/cleanup" or m.text.startswith("/cleanup")))
+async def cmd_cleanup(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+    from bot.services import retention as retention_service
+    docs, images = retention_service.cleanup_user_retention(message.from_user.id)
+    await message.answer(
+        f"🗑 Очистка завершена:\n"
+        f"Документов удалено: {docs}\n"
+        f"Фото удалено: {images}",
+        reply_markup=command_keyboard,
+    )
+
+
 @router.message(lambda m: m.text and m.text.startswith("/memory_remove"))
 async def cmd_memory_remove(message: Message, state: FSMContext):
     await state.clear()
@@ -2382,6 +2402,37 @@ async def cb_suggest(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(result, reply_markup=command_keyboard)
     await callback.answer("Сохранено")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("reminder_done:"))
+async def cb_reminder_done(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if not callback.from_user:
+        return
+    user_id = callback.from_user.id
+    if not _is_allowed(user_id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
+
+    data = callback.data
+    from bot.services import reminder_completion as reminder_completion_service
+    if data == "reminder_done:dismiss":
+        await callback.message.edit_text("👌 Оставлю напоминание активным.")
+        await callback.answer("Отменено")
+        return
+
+    try:
+        reminder_id = int(data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    result = reminder_completion_service.complete_reminder(user_id, reminder_id)
+    await callback.message.edit_text(result, reply_markup=command_keyboard)
+    await callback.answer("Закрыто")
 
 
 @router.message(lambda m: m.text and m.text == "/images")

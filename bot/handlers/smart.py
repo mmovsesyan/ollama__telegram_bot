@@ -55,6 +55,30 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         # Let cron/completion routers handle explicit commands and button presses.
         return
 
+    # Reply-based photo Q&A: if the user replies to an image description
+    # message from the bot, answer the question about that specific photo.
+    reply_to = message.reply_to_message
+    if reply_to and reply_to.message_id:
+        from bot.services import images as images_service
+        image_id = images_service.image_id_for_message(reply_to.message_id)
+        if image_id is not None:
+            answer = await images_service.answer_question(user_id, image_id, text)
+            if answer:
+                await message.answer(answer, reply_markup=command_keyboard)
+            else:
+                await message.answer(
+                    "⚠️ Не удалось получить ответ по фото.", reply_markup=command_keyboard
+                )
+            return
+
+    # Smart reminder completion: "сделал/готово/выполнил ... напоминание".
+    from bot.services import reminder_completion as reminder_completion_service
+    completion_offer = reminder_completion_service.maybe_offer_completion(user_id, text)
+    if completion_offer is not None:
+        offer_text, offer_keyboard = completion_offer
+        await message.answer(offer_text, reply_markup=offer_keyboard)
+        return
+
     # Clear any stuck FSM state before processing a new free-form request.
     if state is not None:
         await state.clear()

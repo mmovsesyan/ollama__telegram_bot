@@ -79,10 +79,19 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="🕙 Время дайджеста", callback_data="settings:set_digest_time"),
+                InlineKeyboardButton(text="🗑 Срок хранения", callback_data="settings:set_retention"),
+            ],
+            [
                 InlineKeyboardButton(text="❌ Закрыть", callback_data="settings:close"),
             ],
         ]
     )
+
+
+def _retention_label(days) -> str:
+    if days is None or days == 0:
+        return "хранить всегда"
+    return f"{days} дн."
 
 
 def _settings_text(prefs: dict) -> str:
@@ -96,7 +105,8 @@ def _settings_text(prefs: dict) -> str:
         f"🧠 Умные напоминания: {_bool_label(prefs.get('smart_reminders_enabled', 1))}\n"
         f"🗣 Голосовой ответ: {_bool_label(prefs.get('voice_output_enabled', 0))}\n"
         f"🌙 Вечерний дайджест: {_bool_label(prefs.get('digest_enabled', 0))}\n"
-        f"🕙 Время дайджеста: {prefs.get('digest_time', '20:00')}"
+        f"🕙 Время дайджеста: {prefs.get('digest_time', '20:00')}\n"
+        f"🗑 Хранение файлов: {_retention_label(prefs.get('retention_days'))}"
     )
 
 
@@ -397,6 +407,49 @@ async def process_digest_time(message: Message, state: FSMContext):
     await state.clear()
     prefs = _user_prefs(message.from_user.id)
     await message.answer("✅ Время дайджеста сохранено.", reply_markup=command_keyboard)
+    await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
+
+
+@router.callback_query(F.data == "settings:set_retention")
+async def cb_set_retention(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user:
+        return
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await state.set_state(BotStates.waiting_retention_days)
+    await callback.message.answer(
+        "🗑 Через сколько дней удалять старые документы и фото?\n"
+        "Введи число (например: 90) или 0, чтобы хранить всегда.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+        ),
+    )
+    await callback.answer("Введи срок")
+
+
+@router.message(BotStates.waiting_retention_days)
+async def process_retention_days(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if not re.fullmatch(r"\d{1,4}", text):
+        await message.answer(
+            "❌ Неверный формат. Введи число дней от 0 до 9999.",
+            reply_markup=command_keyboard,
+        )
+        return
+    days = int(text)
+    db.set_user_prefs(message.from_user.id, retention_days=days)
+    await state.clear()
+    prefs = _user_prefs(message.from_user.id)
+    label = "хранить всегда" if days == 0 else f"{days} дн."
+    await message.answer(f"✅ Срок хранения: {label}.", reply_markup=command_keyboard)
     await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
 
 

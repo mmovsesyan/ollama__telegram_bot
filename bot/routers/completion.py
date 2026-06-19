@@ -565,6 +565,12 @@ async def cmd_help(message: Message):
         "• «новости»\n\n"
         "💬 *AI-чат*\n"
         "• просто напиши вопрос — бот ответит через Ollama\n\n"
+        "🎤 *Голосовой ответ*\n"
+        "• включи в /settings; требуется локальный piper-tts\n\n"
+        "📷 *Вопросы по фото*\n"
+        "• отправь фото, а затем ответь на сообщение с описанием\n\n"
+        "✅ *Закрытие напоминаний*\n"
+        "• напиши «готово», «сделал» или «done» рядом с текстом задачи — бот предложит закрыть\n\n"
         "📋 *Команды:*\n"
         "/start — меню\n"
         "/remind — напоминание\n"
@@ -862,10 +868,12 @@ async def handle_photo(message: Message, state: FSMContext):
     ocr_text = image.get("ocr_text")
     if ocr_text:
         lines.append(f"\n📝 Текст на фото:\n{ocr_text}")
-    await message.answer(
+    lines.append("\n💡 Задавай вопросы, отвечая на это сообщение.")
+    sent = await message.answer(
         "\n".join(lines),
         reply_markup=image_actions_keyboard(image["id"]),
     )
+    images_service.map_description_message(sent.message_id, image["id"])
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("img_save:"))

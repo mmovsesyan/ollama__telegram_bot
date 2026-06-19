@@ -27,6 +27,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud")
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", default="")
+OLLAMA_MAX_CONCURRENT = int(os.getenv("OLLAMA_MAX_CONCURRENT", default="2"))
 
 # Ollama Web Search API (https://ollama.com/api/web_search)
 # Get your key at https://ollama.com and set OLLAMA_WEB_API_KEY
