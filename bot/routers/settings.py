@@ -111,6 +111,7 @@ def _settings_text(prefs: dict) -> str:
 
 
 @router.message(lambda m: m.text and (m.text == "/settings" or m.text.startswith("/settings ")))
+@router.message(F.text == "⚙️ Настройки")
 async def cmd_settings(message: Message, state: FSMContext):
     await state.clear()
     if message.from_user is None:
