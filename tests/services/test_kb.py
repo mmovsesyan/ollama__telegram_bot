@@ -12,6 +12,11 @@ from bot.intent.tools.kb_search import KbSearchTool
 from bot.services import kb as kb_service
 from bot.services.kb import _format_hit, _format_web_fallback_item
 from bot.services.kb_extract import _looks_skippable, _parse_facts
+from bot.ollama.dto import OllamaErrorChunk
+
+
+async def _fake_summary_gen(*args, **kwargs):
+    yield (False, type("C", (), {"message": type("M", (), {"content": "Пользователь интересуется фактами о пользователе."})})())
 
 
 @pytest.fixture
@@ -187,6 +192,40 @@ class TestKbExtractHelpers:
         facts = _parse_facts("[opinion] I think Python is good")
         assert len(facts) == 1
         assert facts[0][0] == "note"  # coerced from 'opinion'
+
+
+class TestKbSummary:
+    @pytest.mark.asyncio
+    async def test_summarize_kb_few_memories_fallback(self, db):
+        kb_service.db = db
+        db.add_memory(1, "fact", "люблю кофе")
+        db.add_memory(1, "fact", "живу в Москве")
+        text = await kb_service.summarize_kb(1)
+        assert "недостаточно данных" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_summarize_kb_returns_profile(self, db):
+        kb_service.db = db
+        for i in range(5):
+            db.add_memory(1, "fact", f"факт номер {i + 1} о пользователе")
+        with patch("bot.services.kb.generate_chat_completion", side_effect=_fake_summary_gen):
+            text = await kb_service.summarize_kb(1)
+        assert "Профиль" in text
+        assert "пользователе" in text
+
+    @pytest.mark.asyncio
+    async def test_summarize_kb_swallows_llm_errors(self, db):
+        kb_service.db = db
+        for i in range(5):
+            db.add_memory(1, "fact", f"факт {i}")
+
+        async def err_gen(*args, **kwargs):
+            yield (False, type("C", (), {"message": type("M", (), {"content": ""})})())
+            yield (True, OllamaErrorChunk(error="model unavailable"))
+
+        with patch("bot.services.kb.generate_chat_completion", side_effect=err_gen):
+            text = await kb_service.summarize_kb(1)
+        assert "вернула ошибку" in text.lower() or "попробуй позже" in text.lower()
 
 
 class TestKbFormatting:

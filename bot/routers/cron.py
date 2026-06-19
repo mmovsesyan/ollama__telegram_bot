@@ -9,7 +9,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.keyboards.inline import (
+    memory_filter_keyboard,
     memory_menu_keyboard,
+    memory_pagination_keyboard,
     monitor_interval_keyboard,
     note_quick_keyboard,
     reminder_quick_keyboard,
@@ -1308,6 +1310,17 @@ async def process_memory_add(message: Message, state: FSMContext):
     await state.clear()
 
 
+@router.message(lambda m: m.text and (m.text == "/memory_summary" or m.text.startswith("/memory_summary")))
+async def cmd_memory_summary(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    await message.answer("🧠 Готовлю профиль на основе памяти...")
+    await _send_memory_summary(message.from_user.id, message)
+
+
 @router.message(lambda m: m.text and m.text.startswith("/memory_remove"))
 async def cmd_memory_remove(message: Message, state: FSMContext):
     await state.clear()
@@ -1381,6 +1394,11 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Показываю память")
         return
 
+    if action == "summary":
+        await callback.answer("Готовлю профиль...")
+        await _send_memory_summary(callback.from_user.id, callback.message)
+        return
+
     if action == "add_auto":
         await callback.message.answer(
             "🧠 Что запомнить? Я сам определю категорию.\n"
@@ -1426,30 +1444,118 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
         return
 
 
-async def _show_memories(user_id: int, message: Message):
+MEMORY_PAGE_SIZE = 5
+MAX_MEMORY_ITEM_LENGTH = 300
+
+
+def _format_memory_item(idx: int, memory: dict) -> str:
+    cat_names = {
+        "fact": "📌 Факт",
+        "preference": "❤️ Предпочтение",
+        "note": "📝 Заметка",
+        "task": "📋 Задача",
+        "decision": "⚖️ Решение",
+    }
+    cat = memory.get("category", "fact")
+    content = memory.get("content", "")
+    text = content if len(content) <= MAX_MEMORY_ITEM_LENGTH else content[:MAX_MEMORY_ITEM_LENGTH].rsplit(" ", 1)[0] + "..."
+    return f"#{idx} | {cat_names.get(cat, cat)}\n{text}"
+
+
+def _filter_memories(memories: list[dict], category: str | None) -> list[dict]:
+    if not category or category == "all":
+        return memories
+    return [m for m in memories if m.get("category", "fact") == category]
+
+
+async def _show_memories(
+    user_id: int,
+    message: Message,
+    page: int = 0,
+    category: str = "all",
+    edit: bool = False,
+):
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
-    memories = db.get_memories(user_id)
-    if not memories:
-        await message.answer(
-            "Нет сохранённых записей.",
-            reply_markup=memory_menu_keyboard(),
-        )
+    all_memories = db.get_memories(user_id)
+    filtered = _filter_memories(all_memories, category)
+    if not filtered:
+        text = "Нет сохранённых записей." if category == "all" else f"Нет записей категории «{category}»."
+        if edit and message.text is not None:
+            try:
+                await message.edit_text(text, reply_markup=memory_menu_keyboard())
+            except Exception:
+                await message.answer(text, reply_markup=memory_menu_keyboard())
+        else:
+            await message.answer(text, reply_markup=memory_menu_keyboard())
         return
 
-    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка", "task": "📋 Задача", "decision": "⚖️ Решение"}
-    text = "🧠 Память:\n\n"
-    buttons = []
-    for idx, m in enumerate(memories, 1):
-        cat = m.get('category', 'fact')
-        content = m.get('content', '')
-        text += f"#{idx} | {cat_names.get(cat, cat)}\n{content}\n\n"
-        buttons.append([InlineKeyboardButton(text=f"🗑 Удалить #{idx}", callback_data=f"del_memory:{m['id']}")])
+    total_pages = max(1, (len(filtered) + MEMORY_PAGE_SIZE - 1) // MEMORY_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * MEMORY_PAGE_SIZE
+    page_memories = filtered[start:start + MEMORY_PAGE_SIZE]
 
-    buttons.append([InlineKeyboardButton(text="➕ Добавить", callback_data="memory_menu:add_auto")])
-    await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await message.answer("Главное меню:", reply_markup=command_keyboard)
+    lines = ["🧠 Память:", ""]
+    buttons: list[list[InlineKeyboardButton]] = []
+    global_idx = start
+    for m in page_memories:
+        global_idx += 1
+        lines.append(_format_memory_item(global_idx, m))
+        lines.append("")
+        buttons.append([InlineKeyboardButton(text=f"🗑 Удалить #{global_idx}", callback_data=f"del_memory:{m['id']}")])
+
+    keyboard_rows = buttons + memory_filter_keyboard(category).inline_keyboard
+    paginator = memory_pagination_keyboard(page, total_pages, category)
+    if paginator:
+        keyboard_rows.extend(paginator.inline_keyboard)
+    keyboard_rows.append([InlineKeyboardButton(text="➕ Добавить", callback_data="memory_menu:add_auto")])
+
+    text = "\n".join(lines).strip()
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    if edit and message.text is not None:
+        try:
+            await message.edit_text(text, reply_markup=markup)
+        except Exception:
+            await message.answer(text, reply_markup=markup)
+    else:
+        await message.answer(text, reply_markup=markup)
+
+
+async def _send_memory_summary(user_id: int, message: Message):
+    from bot.services.kb import summarize_kb
+    text = await summarize_kb(user_id)
+    await message.answer(text, reply_markup=memory_menu_keyboard())
+
+
+@router.callback_query(F.data.startswith("mem_page:"))
+async def cb_memory_page(callback: CallbackQuery):
+    if not callback.from_user or not callback.message:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    parts = callback.data.split(":")
+    try:
+        page = int(parts[1])
+        category = parts[2] if len(parts) > 2 else "all"
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    await _show_memories(callback.from_user.id, callback.message, page=page, category=category, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mem_filter:"))
+async def cb_memory_filter(callback: CallbackQuery):
+    if not callback.from_user or not callback.message:
+        return
+    if not _is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    category = callback.data.split(":", 1)[1] or "all"
+    await _show_memories(callback.from_user.id, callback.message, page=0, category=category, edit=True)
+    await callback.answer(f"Фильтр: {category}")
 
 
 # --- Inline delete callbacks ---

@@ -20,6 +20,7 @@ COMMANDS = [
     BotCommand(command="reminders", description="Список напоминаний"),
     BotCommand(command="memory", description="Показать память"),
     BotCommand(command="memory_add", description="Добавить факт в память"),
+    BotCommand(command="memory_summary", description="Профиль из памяти"),
     BotCommand(command="note", description="Сохранить заметку"),
     BotCommand(command="search", description="Поиск в интернете"),
     BotCommand(command="weather", description="Погода в городе"),

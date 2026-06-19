@@ -22,14 +22,17 @@ def confirm_keyboard(confirm_data: str, cancel_data: str = "cancel") -> InlineKe
 
 
 def memory_menu_keyboard() -> InlineKeyboardMarkup:
-    """Main memory menu: add vs view."""
+    """Main memory menu: add vs view vs summary."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить факт", callback_data="memory_menu:add_fact")],
             [InlineKeyboardButton(text="➕ Добавить предпочтение", callback_data="memory_menu:add_preference")],
             [InlineKeyboardButton(text="➕ Добавить заметку", callback_data="memory_menu:add_note")],
             [InlineKeyboardButton(text="🤖 Автоопределение", callback_data="memory_menu:add_auto")],
-            [InlineKeyboardButton(text="📋 Показать всё", callback_data="memory_menu:show")],
+            [
+                InlineKeyboardButton(text="📋 Показать всё", callback_data="memory_menu:show"),
+                InlineKeyboardButton(text="🧠 Профиль", callback_data="memory_menu:summary"),
+            ],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
         ]
     )
@@ -50,6 +53,50 @@ def memory_category_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
         ]
     )
+
+
+def memory_filter_keyboard(current_filter: str = "all") -> InlineKeyboardMarkup:
+    """Filter bar for the memory list."""
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=("✅ " if current_filter == "all" else "") + "📋 Всё",
+                callback_data="mem_filter:all",
+            ),
+            InlineKeyboardButton(
+                text=("✅ " if current_filter == "fact" else "") + "📌 Факты",
+                callback_data="mem_filter:fact",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=("✅ " if current_filter == "preference" else "") + "❤️ Предпочтения",
+                callback_data="mem_filter:preference",
+            ),
+            InlineKeyboardButton(
+                text=("✅ " if current_filter == "note" else "") + "📝 Заметки",
+                callback_data="mem_filter:note",
+            ),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def memory_pagination_keyboard(
+    page: int,
+    total_pages: int,
+    category: str,
+) -> InlineKeyboardMarkup | None:
+    """Return pagination controls for the memory list, or None if a single page."""
+    if total_pages <= 1:
+        return None
+    row: list[InlineKeyboardButton] = []
+    if page > 0:
+        row.append(InlineKeyboardButton(text="← Назад", callback_data=f"mem_page:{page - 1}:{category}"))
+    row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page + 1 < total_pages:
+        row.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"mem_page:{page + 1}:{category}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 def reminder_quick_keyboard() -> InlineKeyboardMarkup:

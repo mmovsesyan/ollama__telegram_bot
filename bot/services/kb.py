@@ -1,10 +1,21 @@
-"""Knowledge base search: full-text over user's memories with web fallback."""
+"""Knowledge base search, summary, and web fallback."""
 
+import asyncio
+import logging
 from typing import Any
 from urllib.parse import urlparse
 
+from bot.ollama import OllamaChatMessage, generate_chat_completion
+from bot.ollama.dto import OllamaErrorChunk
+from bot.settings import OLLAMA_MODEL
+
 # Forward-declared db reference; set by bot.__init__ at startup.
 db: Any = None
+
+logger = logging.getLogger(__name__)
+
+_MAX_SUMMARY_MEMORIES = 50
+_MAX_SUMMARY_CHARS = 4000
 
 
 def _format_hit(hit: dict, idx: int) -> str:
@@ -30,6 +41,67 @@ def search_kb(user_id: int, query: str, limit: int = 5) -> list[dict]:
     if db is None:
         return []
     return db.search_memories(user_id, query, limit=limit)
+
+
+def _format_memory_for_summary(m: dict, idx: int) -> str:
+    cat = m.get("category", "fact")
+    content = m.get("summary") or m.get("content") or ""
+    return f"{idx}. [{cat}] {content.strip()}"
+
+
+async def summarize_kb(user_id: int) -> str:
+    """Generate a short Russian profile summary from the user's memories.
+
+    Uses the local Ollama model. Falls back gracefully if the model is
+    unavailable or the user has too few memories.
+    """
+    if db is None:
+        return "⚠️ База данных недоступна."
+    try:
+        memories = db.get_memories(user_id)
+    except Exception as e:
+        logger.warning("[KB SUMMARY] failed to load memories for %s: %s", user_id, e)
+        return "⚠️ Не удалось загрузить память."
+
+    if not memories or len(memories) < 3:
+        return "🧠 Пока недостаточно данных для профиля. Сохрани несколько фактов через /memory."
+
+    memories = memories[:_MAX_SUMMARY_MEMORIES]
+    lines = [_format_memory_for_summary(m, i) for i, m in enumerate(memories, 1)]
+    memories_text = "\n".join(lines)
+    if len(memories_text) > _MAX_SUMMARY_CHARS:
+        memories_text = memories_text[:_MAX_SUMMARY_CHARS].rsplit("\n", 1)[0] + "\n..."
+
+    prompt = (
+        "Ты — личный ассистент. На основе записей о пользователе составь краткий профиль "
+        "на русском языке: 5–7 пунктов, без воды. Сгруппируй факты по темам "
+        "(чем занимается, интересы, предпочтения, важные заметки).\n\n"
+        f"ЗАПИСИ:\n{memories_text}\n\n"
+        "ПРОФИЛЬ:"
+    )
+
+    messages = [OllamaChatMessage(role="user", content=prompt)]
+    output = ""
+    try:
+        async with asyncio.timeout(60):
+            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.4):
+                if is_done:
+                    break
+                if isinstance(chunk, OllamaErrorChunk):
+                    logger.warning("[KB SUMMARY] LLM error: %s", chunk.error)
+                    return "⚠️ Модель вернула ошибку. Попробуй позже."
+                output += chunk.message.content
+    except asyncio.TimeoutError:
+        logger.info("[KB SUMMARY] timed out for user_id=%s", user_id)
+        return "⚠️ Модель долго думает. Попробуй позже."
+    except Exception as e:
+        logger.warning("[KB SUMMARY] failed for user_id=%s: %s", user_id, e)
+        return "⚠️ Не удалось составить профиль. Попробуй позже."
+
+    summary = output.strip()
+    if not summary:
+        return "⚠️ Модель вернула пустой ответ. Попробуй позже."
+    return f"🧠 Профиль на основе памяти:\n\n{summary[:3500]}"
 
 
 def _format_web_fallback_item(item: dict, idx: int) -> str:
