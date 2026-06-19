@@ -21,20 +21,19 @@ With long-term memory, reminders, web search, site monitoring, and voice recogni
 
 | Feature | Description |
 |---------|-------------|
-| ✨ **Smart input** | One field for chat, weather, news, tasks, notes and web search — the bot figures out the intent |
+| ✨ **Smart input** | One button/field for chat, weather, news, tasks, notes and web search — the bot figures out the intent |
+| ⏰ **Reminders** | One-shot and recurring: daily, weekdays, weekends, weekly, monthly |
+| 🤖 **AI tasks** | Create tasks via smart input: «задача через час проверить почту» — the AI executes them at the scheduled time |
 | 🎤 **Voice messages** | Speech-to-text via Whisper, processed the same way as text |
 | 🧠 **Memory** | Facts, preferences, notes. Auto-extract after each reply, LLM-compaction for long entries |
 | 📚 **Knowledge base (FTS5)** | Full-text search over your memory. "What did I say about X" — instant, no LLM. Empty result falls back to the web |
-| ⏰ **Reminders** | One-shot and recurring: daily, weekdays, weekends, weekly, monthly |
-| 🤖 **AI tasks** | Reminders the AI executes at the scheduled time (weather, web search, etc.) |
-| 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
-| 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
 | 📄 **Files** | Text extraction from PDF, DOCX, XLSX, CSV, TXT, JSON, MD and more. Reply to the summary to ask questions about the document |
 | 📷 **Photo Q&A** | Send a photo, get a description + OCR, then reply to ask questions about that specific image |
 | 🧹 **Retention** | Old documents and photos are auto-deleted after 90 days (configurable). Manual `/cleanup` available |
+| 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
 | 🌍 **Localization** | Bot asks for name and country on first launch, all times shown in your timezone |
 | ✏️ **Editing** | Edit reminder/task text or time directly in Telegram |
-| ✅ **Smart completion** | Say «готово», «сделал» or «done» about an active reminder — the bot will offer to close it |
+| ✅ **Smart completion** | Say «готово», «сделал» or «done» about an active reminder/task — the bot will offer to close it |
 
 ---
 
