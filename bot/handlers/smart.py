@@ -19,12 +19,8 @@ db = None
 # Texts that are handled by reply-button or explicit-command routers should not
 # be processed by the free-form smart pipeline.
 _BUTTON_COMMANDS = {
-    "🔍 Поиск",
-    "🌤 Погода",
-    "📰 Новости",
+    "✨ Умный запрос",
     "⏰ Напомнить",
-    "📋 Задача",
-    "📝 Заметка",
     "📒 Список",
     "🧠 Память",
     "📚 База",

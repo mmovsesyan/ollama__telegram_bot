@@ -21,16 +21,13 @@ With long-term memory, reminders, web search, site monitoring, and voice recogni
 
 | Feature | Description |
 |---------|-------------|
-| 💬 **AI chat** | Contextual dialog with model switching, like/dislike buttons, history persistence and compaction |
+| ✨ **Smart input** | One field for chat, weather, news, tasks, notes and web search — the bot figures out the intent |
 | 🎤 **Voice messages** | Speech-to-text via Whisper, processed the same way as text |
 | 🧠 **Memory** | Facts, preferences, notes. Auto-extract after each reply, LLM-compaction for long entries |
 | 📚 **Knowledge base (FTS5)** | Full-text search over your memory. "What did I say about X" — instant, no LLM. Empty result falls back to the web |
-| 📝 **Notes** | Save personal notes in the user profile |
 | ⏰ **Reminders** | One-shot and recurring: daily, weekdays, weekends, weekly, monthly |
 | 🤖 **AI tasks** | Reminders the AI executes at the scheduled time (weather, web search, etc.) |
-| 🔍 **Web search** | Search and fetch pages via the Ollama Web API |
-| 🌤 **Weather** | wttr.in with Open-Meteo fallback, in your timezone |
-| 📰 **News** | By topic ("AI", "Tesla") or general top headlines |
+| 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
 | 🔎 **Site monitoring** | URL checks with Telegram alerts, alert state survives restarts |
 | 📄 **Files** | Text extraction from PDF, DOCX, XLSX, CSV, TXT, JSON, MD and more. Reply to the summary to ask questions about the document |
 | 📷 **Photo Q&A** | Send a photo, get a description + OCR, then reply to ask questions about that specific image |

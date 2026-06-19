@@ -5,8 +5,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 # frees a slot for actually useful actions.
 command_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌤 Погода"), KeyboardButton(text="📰 Новости")],
-        [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="📋 Задача"), KeyboardButton(text="📝 Заметка")],
+        [KeyboardButton(text="✨ Умный запрос"), KeyboardButton(text="⏰ Напомнить")],
         [KeyboardButton(text="📒 Список"), KeyboardButton(text="🧠 Память"), KeyboardButton(text="📚 База")],
         [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="❓ Помощь"), KeyboardButton(text="⚙️ Настройки")],
     ],
@@ -25,9 +24,8 @@ cancel_keyboard = ReplyKeyboardMarkup(
 # FSM keyboard keeps main actions available while showing cancel.
 fsm_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="📝 Заметка")],
-        [KeyboardButton(text="🧠 Память"), KeyboardButton(text="📋 Задача"), KeyboardButton(text="🌤 Погода")],
-        [KeyboardButton(text="❌ Отмена")],
+        [KeyboardButton(text="✨ Умный запрос"), KeyboardButton(text="⏰ Напомнить")],
+        [KeyboardButton(text="🧠 Память"), KeyboardButton(text="📚 База"), KeyboardButton(text="❌ Отмена")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,

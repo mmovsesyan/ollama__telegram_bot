@@ -114,13 +114,11 @@ def _estimate_tokens(text: str) -> int:
 
 
 BUTTON_MAP = {
-    "💬 Чат": None,
-    "🔍 Поиск": "/search",
-    "🌤 Погода": "/weather",
+    "✨ Умный запрос": None,
     "⏰ Напомнить": "/remind",
-    "📋 Задача": "/task",
-    "📝 Заметка": "/note",
+    "📒 Список": "/reminders",
     "🧠 Память": "/memory",
+    "📚 База": "/kb",
     "📊 Отчёт": "/report",
     "❓ Помощь": "/help",
     "🗑 Очистить": "/clear",
@@ -546,25 +544,21 @@ async def cmd_help(message: Message):
         return
     await message.answer(
         "🤖 Вот что я умею:\n\n"
-        "🌤 *Погода*\n"
-        "• «погода в Москве»\n\n"
+        "✨ *Умный запрос*\n"
+        "• погода, новости, задачи, заметки, поиск и просто вопросы — всё в одном поле ввода\n"
+        "• примеры:\n"
+        "  «погода в Москве»\n"
+        "  «новости Tesla»\n"
+        "  «задача через час проверить почту»\n"
+        "  «заметка: купить акции TSLA»\n"
+        "  «поищи рецепт пасты»\n\n"
         "⏰ *Напоминания*\n"
         "• «напомни через 5 минут позвонить»\n"
         "• «завтра в 9:00 проверить отчёт»\n"
         "• «каждое утро в 9 покажи новости»\n\n"
-        "📋 *Задачи (AI выполнит сам)*\n"
-        "• «задача каждый день в 7:00 погода в Москве»\n"
-        "• «задача через час поищи новости Tesla»\n\n"
-        "📝 *Заметки*\n"
-        "• «заметка: купить акции TSLA»\n\n"
         "🧠 *Память*\n"
         "• «запомни, я люблю краткие ответы»\n"
         "• «факт: я работаю над проектом X»\n\n"
-        "🔍 *Поиск и новости*\n"
-        "• «поищи последние новости Tesla»\n"
-        "• «новости»\n\n"
-        "💬 *AI-чат*\n"
-        "• просто напиши вопрос — бот ответит через Ollama\n\n"
         "🎤 *Голосовой ответ*\n"
         "• включи в /settings; требуется локальный piper-tts\n\n"
         "📷 *Вопросы по фото*\n"
@@ -577,6 +571,7 @@ async def cmd_help(message: Message):
         "/task — задача\n"
         "/note — заметка\n"
         "/memory — память\n"
+        "/kb — поиск по базе\n"
         "/models — модели\n"
         "/model — сменить модель\n"
         "/clear — очистить историю\n"
@@ -662,21 +657,6 @@ async def cmd_clear(message: Message):
     await message.answer("✅ История очищена.", reply_markup=command_keyboard)
 
 
-@router.message(F.text == "💬 Чат")
-async def btn_chat(message: Message):
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
-        return
-    await message.answer(
-        "💬 Просто напиши или скажи голосом, что нужно.\n\n"
-        "Например:\n"
-        "• «погода в Москве»\n"
-        "• «напомни через 5 минут позвонить»\n"
-        "• «поищи последние новости Tesla»",
-        reply_markup=command_keyboard,
-    )
 
 
 @router.callback_query(F.data == "like")

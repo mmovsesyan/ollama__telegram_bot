@@ -63,8 +63,8 @@ def _format_trigger(trigger_at, user_id: int) -> str:
 
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
-    "🔍 Поиск", "⏰ Напомнить", "📋 Задача",
-    "📝 Заметка", "📒 Список", "🧠 Память", "📚 База", "🌤 Погода", "📰 Новости",
+    "✨ Умный запрос", "⏰ Напомнить",
+    "📒 Список", "🧠 Память", "📚 База",
     "📊 Отчёт", "❓ Помощь", "⚙️ Настройки",
 }
 
@@ -616,8 +616,9 @@ async def process_remind_cancel(message: Message, state: FSMContext):
 
 # --- Tasks (AI-executed scheduled jobs) ---
 
-@router.message(F.text == "📋 Задача")
-async def btn_task(message: Message, state: FSMContext):
+@router.message(lambda m: m.text and m.text == "/task")
+async def cmd_task(message: Message, state: FSMContext):
+    """Task creation via explicit /task command (button removed from main menu)."""
     await state.clear()
     if message.from_user is None:
         return
@@ -637,12 +638,6 @@ async def btn_task(message: Message, state: FSMContext):
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_task_text)
-
-
-@router.message(lambda m: m.text and m.text == "/task")
-async def cmd_task(message: Message, state: FSMContext):
-    await state.clear()
-    await btn_task(message, state)
 
 
 @router.message(BotStates.waiting_task_text)
@@ -794,31 +789,6 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
 
 
 # --- Notes ---
-
-@router.message(F.text == "📝 Заметка")
-async def btn_note(message: Message, state: FSMContext):
-    await state.clear()
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        return
-    if db is None:
-        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
-        return
-    notes = db.get_notes(message.from_user.id)
-    if notes:
-        await message.answer(
-            f"📝 Твои заметки:\n{notes}\n\nХочешь добавить ещё одну?",
-            reply_markup=note_quick_keyboard(),
-        )
-    else:
-        await message.answer(
-            "📝 Что записать?\n"
-            "Например: купить акции TSLA",
-            reply_markup=cancel_keyboard,
-        )
-        await state.set_state(BotStates.waiting_note)
-
 
 @router.message(lambda m: m.text and m.text.startswith("/note"))
 async def cmd_note(message: Message, state: FSMContext):
@@ -1906,13 +1876,11 @@ async def cb_add_monitor(callback: CallbackQuery, state: FSMContext):
 
 # Register button handlers for instant FSM routing
 _BUTTON_HANDLERS.update({
-    "💬 Чат": lambda msg, st: None,
-    "🔍 Поиск": lambda msg, st: btn_search(msg, st),
+    "✨ Умный запрос": lambda msg, st: btn_smart_block(msg, st),
     "⏰ Напомнить": lambda msg, st: btn_remind(msg, st),
-    "📋 Задача": lambda msg, st: btn_task(msg, st),
-    "📝 Заметка": lambda msg, st: btn_note(msg, st),
+    "📒 Список": lambda msg, st: cmd_reminders(msg, st),
     "🧠 Память": lambda msg, st: cmd_memory(msg, st),
-    "🌤 Погода": lambda msg, st: btn_weather(msg, st),
+    "📚 База": lambda msg, st: btn_kb(msg, st),
     "📊 Отчёт": lambda msg, st: cmd_report(msg),
     "❓ Помощь": lambda msg, st: cmd_help(msg),
     "⚙️ Настройки": lambda msg, st: cmd_settings(msg, st),
@@ -1949,22 +1917,6 @@ async def cmd_weather(message: Message, state: FSMContext):
         return
 
     await _process_weather(message, parts[1].strip())
-
-
-@router.message(F.text == "🌤 Погода")
-async def btn_weather(message: Message, state: FSMContext):
-    await state.clear()
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        return
-    await message.answer(
-        "🌤 Введи название города:\n"
-        "Пример: Москва\n"
-        "Или прогноз: «Москва на неделю», «Сочи 5 дней», «Москва месяц»",
-        reply_markup=cancel_keyboard,
-    )
-    await state.set_state(BotStates.waiting_weather)
 
 
 async def _process_weather(message: Message, raw: str):
@@ -2184,23 +2136,6 @@ async def cmd_news(message: Message, state: FSMContext):
         await state.set_state(BotStates.waiting_news)
         return
     await _process_news(message, parts[1])
-
-
-@router.message(F.text == "📰 Новости")
-async def btn_news(message: Message, state: FSMContext):
-    await state.clear()
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        return
-    await message.answer(
-        "📰 По какой теме новости?\n"
-        "Например: «ИИ», «Tesla», «биткоин», «спорт»\n"
-        "Или «дайджест» — персональная подборка по категориям.\n"
-        "Или просто «топ» — покажу самое актуальное.",
-        reply_markup=cancel_keyboard,
-    )
-    await state.set_state(BotStates.waiting_news)
 
 
 @router.message(BotStates.waiting_news)
@@ -2533,19 +2468,42 @@ async def cmd_search(message: Message, state: FSMContext):
     await _process_search(message, parts[1].strip())
 
 
-@router.message(F.text == "🔍 Поиск")
-async def btn_search(message: Message, state: FSMContext):
+@router.message(F.text == "✨ Умный запрос")
+async def btn_smart_block(message: Message, state: FSMContext):
+    """Single smart-entry button replaces separate search/weather/news/task/note buttons."""
     await state.clear()
     if message.from_user is None:
         return
     if not _is_allowed(message.from_user.id):
         return
     await message.answer(
-        "🔍 Введи поисковый запрос:\n"
-        "Пример: последние новости о Tesla",
-        reply_markup=cancel_keyboard,
+        "🧠 Умный режим. Просто напиши запрос:\n"
+        "• «погода в Москве»\n"
+        "• «новости Tesla»\n"
+        "• «задача через час проверить почту»\n"
+        "• «заметка: купить молоко»\n"
+        "• «поищи рецепт пасты»",
+        reply_markup=command_keyboard,
     )
-    await state.set_state(BotStates.waiting_search)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/search"))
+async def cmd_search(message: Message, state: FSMContext):
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not _is_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "🔍 Введи поисковый запрос:\n"
+            "Пример: последние новости о Tesla",
+            reply_markup=cancel_keyboard,
+        )
+        await state.set_state(BotStates.waiting_search)
+        return
+    await _process_search(message, parts[1].strip())
 
 
 async def _process_search(message: Message, query: str):
@@ -2692,14 +2650,10 @@ async def cmd_help(message: Message):
 # Register remaining button handlers (must come after function definitions).
 # These let _fsm_guard route a button press to the right flow instead of
 # falling back to "press the button again".
+_BUTTON_HANDLERS["✨ Умный запрос"] = btn_smart_block
 _BUTTON_HANDLERS["❓ Помощь"] = lambda msg, st: cmd_help(msg)
 _BUTTON_HANDLERS["⏰ Напомнить"] = btn_remind
-_BUTTON_HANDLERS["📋 Задача"] = btn_task
-_BUTTON_HANDLERS["📝 Заметка"] = btn_note
 _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
 _BUTTON_HANDLERS["📚 База"] = btn_kb
-_BUTTON_HANDLERS["🌤 Погода"] = btn_weather
-_BUTTON_HANDLERS["🔍 Поиск"] = btn_search
-_BUTTON_HANDLERS["📰 Новости"] = btn_news
 _BUTTON_HANDLERS["📊 Отчёт"] = cmd_report
 _BUTTON_HANDLERS["📒 Список"] = cmd_reminders
