@@ -32,6 +32,7 @@ COMMANDS = [
     BotCommand(command="report", description="Ежедневный отчет"),
     BotCommand(command="settings", description="Настройки бота"),
     BotCommand(command="briefing", description="Утренний брифинг сейчас"),
+    BotCommand(command="digest", description="Вечерний дайджест сейчас"),
 ]
 
 
@@ -74,6 +75,7 @@ async def main() -> None:
     from bot.services import news_categories as news_categories_service
     from bot.services import reminder_suggest as reminder_suggest_service
     from bot.services import images as images_service
+    from bot.services import digest as digest_service
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
@@ -83,6 +85,7 @@ async def main() -> None:
     reminder_suggest_service.db = db
     reminder_suggest_service.reminders_service = reminders_service
     images_service.db = db
+    digest_service.db = db
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE
@@ -273,10 +276,29 @@ async def main() -> None:
             await briefing_service.send_briefing(prefs["user_id"], aiogram_bot)
             db.update_briefing_sent(prefs["user_id"], today_str)
 
+    async def check_digests():
+        if db is None:
+            return
+        from bot.services import digest as digest_service
+        from bot.services.profile import now_in_tz
+        users = db.get_digest_enabled_users()
+        for prefs in users:
+            tz_name = prefs.get("timezone") or "UTC"
+            local_now = now_in_tz(tz_name)
+            current_time = local_now.strftime("%H:%M")
+            if current_time != (prefs.get("digest_time") or "20:00"):
+                continue
+            today_str = local_now.strftime("%Y-%m-%d")
+            if prefs.get("last_digest_date") == today_str:
+                continue
+            await digest_service.send_digest(prefs["user_id"], aiogram_bot)
+            db.update_digest_sent(prefs["user_id"], today_str)
+
     scheduler.add_job(check_reminders, IntervalTrigger(seconds=30), id="reminders", replace_existing=True)
     scheduler.add_job(check_monitors, IntervalTrigger(seconds=60), id="monitors", replace_existing=True)
     scheduler.add_job(cleanup_sessions, IntervalTrigger(minutes=30), id="cleanup", replace_existing=True)
     scheduler.add_job(check_briefings, IntervalTrigger(minutes=1), id="briefing", replace_existing=True)
+    scheduler.add_job(check_digests, IntervalTrigger(minutes=1), id="digest", replace_existing=True)
     scheduler.start()
 
     print(f"[OLLAMA] Selected base model -> {OLLAMA_MODEL}")

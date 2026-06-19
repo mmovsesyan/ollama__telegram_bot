@@ -78,6 +78,18 @@ class Database:
                 conn.execute("ALTER TABLE user_prefs ADD COLUMN smart_reminders_enabled INTEGER DEFAULT 1")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_enabled INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_time TEXT DEFAULT '20:00'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE user_prefs ADD COLUMN last_digest_date TEXT")
+            except sqlite3.OperationalError:
+                pass
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,6 +127,9 @@ class Database:
                     briefing_city TEXT,
                     last_briefing_date TEXT,
                     smart_reminders_enabled INTEGER DEFAULT 1,
+                    digest_enabled INTEGER DEFAULT 0,
+                    digest_time TEXT DEFAULT '20:00',
+                    last_digest_date TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -643,6 +658,42 @@ class Database:
                 (date_str, user_id)
             )
             conn.commit()
+
+    def get_digest_enabled_users(self) -> list[dict]:
+        """Return users who have evening digest enabled."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT user_id, timezone, digest_enabled, digest_time, "
+                "proactive_enabled, news_categories, briefing_city, last_digest_date "
+                "FROM user_prefs WHERE digest_enabled = 1 AND proactive_enabled = 1"
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_digest_sent(self, user_id: int, date_str: str):
+        """Record the last date an evening digest was sent."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE user_prefs SET last_digest_date = ? WHERE user_id = ?",
+                (date_str, user_id)
+            )
+            conn.commit()
+
+    def get_memories_for_date(
+        self,
+        user_id: int,
+        start_utc_iso: str,
+        end_utc_iso: str,
+    ) -> list[dict]:
+        """Return memories created in a UTC date range."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM memories WHERE user_id = ? AND created_at >= ? AND created_at < ? "
+                "ORDER BY created_at DESC",
+                (user_id, start_utc_iso, end_utc_iso),
+            )
+            return [dict(r) for r in cursor.fetchall()]
 
     def add_document(
         self,

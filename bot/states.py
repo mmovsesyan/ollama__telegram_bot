@@ -29,3 +29,4 @@ class BotStates(StatesGroup):
     waiting_briefing_time = State()
     waiting_briefing_categories = State()
     waiting_briefing_city = State()
+    waiting_digest_time = State()

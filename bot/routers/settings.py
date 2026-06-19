@@ -43,6 +43,7 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
     proactive_on = bool(prefs.get("proactive_enabled", 1))
     voice_on = bool(prefs.get("voice_output_enabled", 0))
     smart_reminders_on = bool(prefs.get("smart_reminders_enabled", 1))
+    digest_on = bool(prefs.get("digest_enabled", 0))
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -71,8 +72,13 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
                     text=f"🧠 Умные напоминания: {_bool_label(smart_reminders_on)}",
                     callback_data="settings:toggle_smart_reminders",
                 ),
+                InlineKeyboardButton(
+                    text=f"🌙 Дайджест: {_bool_label(digest_on)}",
+                    callback_data="settings:toggle_digest",
+                ),
             ],
             [
+                InlineKeyboardButton(text="🕙 Время дайджеста", callback_data="settings:set_digest_time"),
                 InlineKeyboardButton(text="❌ Закрыть", callback_data="settings:close"),
             ],
         ]
@@ -83,12 +89,14 @@ def _settings_text(prefs: dict) -> str:
     return (
         "⚙️ Настройки\n\n"
         f"🔔 Утренний брифинг: {_bool_label(prefs.get('briefing_enabled', 1))}\n"
-        f"🕐 Время: {prefs.get('briefing_time', '08:00')}\n"
+        f"🕐 Время брифинга: {prefs.get('briefing_time', '08:00')}\n"
         f"📰 Категории: {prefs.get('news_categories', 'tech,markets,ai')}\n"
         f"🏙 Город: {prefs.get('briefing_city') or briefing_service._default_city_for_tz(prefs.get('timezone'))}\n"
         f"🔕 Проактивность: {_bool_label(prefs.get('proactive_enabled', 1))}\n"
         f"🧠 Умные напоминания: {_bool_label(prefs.get('smart_reminders_enabled', 1))}\n"
-        f"🗣 Голосовой ответ: {_bool_label(prefs.get('voice_output_enabled', 0))}"
+        f"🗣 Голосовой ответ: {_bool_label(prefs.get('voice_output_enabled', 0))}\n"
+        f"🌙 Вечерний дайджест: {_bool_label(prefs.get('digest_enabled', 0))}\n"
+        f"🕙 Время дайджеста: {prefs.get('digest_time', '20:00')}"
     )
 
 
@@ -200,6 +208,27 @@ async def cb_toggle_smart_reminders(callback: CallbackQuery):
     except Exception:
         pass
     await callback.answer(f"Умные напоминания {_bool_label(new_val)}")
+
+
+@router.callback_query(F.data == "settings:toggle_digest")
+async def cb_toggle_digest(callback: CallbackQuery):
+    if not callback.from_user:
+        return
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if db is None:
+        await callback.answer("База данных недоступна", show_alert=True)
+        return
+    prefs = _user_prefs(callback.from_user.id)
+    new_val = 0 if prefs.get("digest_enabled", 0) else 1
+    db.set_user_prefs(callback.from_user.id, digest_enabled=new_val)
+    prefs = _user_prefs(callback.from_user.id)
+    try:
+        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
+    except Exception:
+        pass
+    await callback.answer(f"Вечерний дайджест {_bool_label(new_val)}")
 
 
 @router.callback_query(F.data == "settings:set_time")
@@ -331,6 +360,46 @@ async def process_briefing_city(message: Message, state: FSMContext):
     await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
 
 
+@router.callback_query(F.data == "settings:set_digest_time")
+async def cb_set_digest_time(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user:
+        return
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await state.set_state(BotStates.waiting_digest_time)
+    await callback.message.answer(
+        "🕙 Во сколько присылать вечерний дайджест?\nОтветь в формате HH:MM, например: 20:00",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+        ),
+    )
+    await callback.answer("Введи время")
+
+
+@router.message(BotStates.waiting_digest_time)
+async def process_digest_time(message: Message, state: FSMContext):
+    if message.from_user is None:
+        await state.clear()
+        return
+    if db is None:
+        await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if not re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", text):
+        await message.answer(
+            "❌ Неверный формат. Введи время как HH:MM, например 20:00.",
+            reply_markup=command_keyboard,
+        )
+        return
+    db.set_user_prefs(message.from_user.id, digest_time=text)
+    await state.clear()
+    prefs = _user_prefs(message.from_user.id)
+    await message.answer("✅ Время дайджеста сохранено.", reply_markup=command_keyboard)
+    await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
+
+
 @router.message(lambda m: m.text and (m.text == "/briefing" or m.text.startswith("/briefing")))
 async def cmd_briefing(message: Message, state: FSMContext):
     """Send the morning briefing on demand."""
@@ -342,3 +411,17 @@ async def cmd_briefing(message: Message, state: FSMContext):
     await message.answer("🌅 Собираю брифинг...")
     from bot.bot import bot as aiogram_bot
     await briefing_service.send_briefing(message.from_user.id, aiogram_bot)
+
+
+@router.message(lambda m: m.text and (m.text == "/digest" or m.text.startswith("/digest")))
+async def cmd_digest(message: Message, state: FSMContext):
+    """Send the evening digest on demand."""
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not is_allowed(message.from_user.id):
+        return
+    await message.answer("🌙 Собираю вечерний дайджест...")
+    from bot.bot import bot as aiogram_bot
+    from bot.services import digest as digest_service
+    await digest_service.send_digest(message.from_user.id, aiogram_bot)
