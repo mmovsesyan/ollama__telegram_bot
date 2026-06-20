@@ -1,19 +1,26 @@
 import html
+import ipaddress
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import aiohttp
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from bot.keyboards.inline import (
     memory_filter_keyboard,
     memory_menu_keyboard,
     memory_pagination_keyboard,
     monitor_interval_keyboard,
-    note_quick_keyboard,
     reminder_quick_keyboard,
     task_quick_keyboard,
 )
@@ -29,6 +36,7 @@ from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
 from bot.states import BotStates
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 # Re-export service helpers so existing `from bot.routers.cron import ...` keep working.
 _process_remind = reminders_service._process_remind
@@ -61,11 +69,17 @@ def _format_trigger(trigger_at, user_id: int) -> str:
             return trigger_at  # pragma: no cover — show raw if mangled
     return format_local(trigger_at, _user_tz(user_id))
 
+
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
-    "✨ Умный запрос", "⏰ Напомнить",
-    "📒 Список", "🧠 Память", "📚 База",
-    "📊 Отчёт", "❓ Помощь", "⚙️ Настройки",
+    "✨ Умный запрос",
+    "⏰ Напомнить",
+    "📒 Список",
+    "🧠 Память",
+    "📚 База",
+    "📊 Отчёт",
+    "❓ Помощь",
+    "⚙️ Настройки",
 }
 
 # Button text → handler mapping for instant routing when pressed during FSM
@@ -109,12 +123,12 @@ def _parse_interval(text: str) -> int:
     text = text.strip().lower()
     if not text:
         return 300
-    if text.endswith('m'):
+    if text.endswith("m"):
         try:
             return int(text[:-1]) * 60
         except ValueError:
             return 300
-    if text.endswith('h'):
+    if text.endswith("h"):
         try:
             return int(text[:-1]) * 3600
         except ValueError:
@@ -141,11 +155,43 @@ def _format_interval(seconds: int) -> str:
 def _normalize_url(url: str) -> str:
     """Add http:// if no scheme present."""
     url = url.strip()
-    if '://' not in url:
+    if "://" not in url:
         url = f"http://{url}"
     return url
 
 
+def _is_safe_monitor_url(url: str) -> tuple[bool, str]:
+    """Block obviously internal / unsafe URLs for the site monitor.
+
+    Monitors run on the bot's scheduler and issue outbound HTTP requests.
+    We reject non-public schemes, missing hosts, localhost, and private/reserved
+    IP literals to prevent SSRF against internal services (Ollama, cloud metadata,
+    etc.). Domain names are accepted on trust; a determined attacker can still
+    point a public DNS name at an internal IP, so this is a best-effort guard.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        return False, f"схема `{scheme}` не разрешена (только http/https)"
+    host = parsed.hostname
+    if not host:
+        return False, "не удалось определить хост"
+    host = host.lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return False, "localhost запрещён"
+    try:
+        addr = ipaddress.ip_address(host)
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            return False, "внутренние IP-адреса запрещены"
+    except ValueError:
+        pass
+    return True, ""
 
 
 def _clean_snippet(text: str, max_len: int = 200) -> str:
@@ -157,16 +203,58 @@ def _clean_snippet(text: str, max_len: int = 200) -> str:
     text = re.sub(r"\s+", " ", text).strip()
 
     garbage = [
-        r"В приложении удобнее", r"RuStore", r"Samsung Galaxy Store", r"Huawei AppGallery",
-        r"Xiaomi GetApps", r"AppGallery", r"GetApps", r"КУПИТЬ", r"ДОСТАВКА", r"СПОСОБЫ",
-        r"отслеживать", r"Сравнить", r"В список желаний", r"Сделать любимым", r"Оставить отзыв",
-        r"Подробнее", r"ПОДРОБНЕЕ", r"рейтинг:", r"\(1\)", r"ISBN", r"Артикул", r"Артикул:",
-        r"товара:", r"Попробуйте обновленную версию", r"LiveLib", r"Часть функций", r"бета-версии",
-        r"Моя оценка", r"Все уведомления", r"Рецензии", r"Цитаты", r"Издания и произведения",
-        r"Пожаловаться", r"прочитали", r"планируют", r"рецензий", r"цитаты", r"№\d+ в ",
-        r"Goodreads", r"Вподобайки", r"Характеристики", r"Переглянути фото", r"Паперова",
-        r"Електронна", r"В наявності", r"Відправка:", r"Не получается оформить заказ?",
-        r"укажите код", r"СПОСОБЫ ОПЛАТЫ", r"код \d+", r"КУПИТЬ С ДОСТАВКОЙ", r"книгу в наявності",
+        r"В приложении удобнее",
+        r"RuStore",
+        r"Samsung Galaxy Store",
+        r"Huawei AppGallery",
+        r"Xiaomi GetApps",
+        r"AppGallery",
+        r"GetApps",
+        r"КУПИТЬ",
+        r"ДОСТАВКА",
+        r"СПОСОБЫ",
+        r"отслеживать",
+        r"Сравнить",
+        r"В список желаний",
+        r"Сделать любимым",
+        r"Оставить отзыв",
+        r"Подробнее",
+        r"ПОДРОБНЕЕ",
+        r"рейтинг:",
+        r"\(1\)",
+        r"ISBN",
+        r"Артикул",
+        r"Артикул:",
+        r"товара:",
+        r"Попробуйте обновленную версию",
+        r"LiveLib",
+        r"Часть функций",
+        r"бета-версии",
+        r"Моя оценка",
+        r"Все уведомления",
+        r"Рецензии",
+        r"Цитаты",
+        r"Издания и произведения",
+        r"Пожаловаться",
+        r"прочитали",
+        r"планируют",
+        r"рецензий",
+        r"цитаты",
+        r"№\d+ в ",
+        r"Goodreads",
+        r"Вподобайки",
+        r"Характеристики",
+        r"Переглянути фото",
+        r"Паперова",
+        r"Електронна",
+        r"В наявності",
+        r"Відправка:",
+        r"Не получается оформить заказ?",
+        r"укажите код",
+        r"СПОСОБЫ ОПЛАТЫ",
+        r"код \d+",
+        r"КУПИТЬ С ДОСТАВКОЙ",
+        r"книгу в наявності",
     ]
     for g in garbage:
         text = re.sub(g, "", text, flags=re.IGNORECASE)
@@ -191,7 +279,17 @@ def _extract_main_text(html_text: str, max_len: int = 250) -> str:
         return _clean_snippet(html_text, max_len)
 
     soup = BeautifulSoup(html_text, "lxml")
-    for tag_name in ("script", "style", "nav", "header", "footer", "aside", "form", "button", "noscript"):
+    for tag_name in (
+        "script",
+        "style",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+        "button",
+        "noscript",
+    ):
         for t in soup.find_all(tag_name):
             t.decompose()
 
@@ -199,14 +297,24 @@ def _extract_main_text(html_text: str, max_len: int = 250) -> str:
     if meta and meta.get("content"):
         desc = meta["content"].strip()
         if 30 < len(desc) < 300:
-            return desc[:max_len].rsplit(" ", 1)[0] + "..." if len(desc) > max_len else desc
+            return (
+                desc[:max_len].rsplit(" ", 1)[0] + "..."
+                if len(desc) > max_len
+                else desc
+            )
 
     candidates = []
     for tag in soup.find_all(("p", "div", "article", "section", "span")):
         txt = tag.get_text(separator=" ", strip=True)
         if len(txt) < 30:
             continue
-        noise = txt.count("|") + txt.count("→") + txt.count("↳") + txt.count("▸") + txt.count("·")
+        noise = (
+            txt.count("|")
+            + txt.count("→")
+            + txt.count("↳")
+            + txt.count("▸")
+            + txt.count("·")
+        )
         score = len(txt) - noise * 10
         candidates.append((score, txt))
     if not candidates:
@@ -221,8 +329,12 @@ def _extract_main_text(html_text: str, max_len: int = 250) -> str:
 
 async def ollama_web_search(query: str, max_results: int = 5):
     from bot.settings import OLLAMA_WEB_API_KEY
+
     if not OLLAMA_WEB_API_KEY:
-        return None, "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com"
+        return (
+            None,
+            "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com",
+        )
 
     url = "https://ollama.com/api/web_search"
     headers = {
@@ -233,7 +345,12 @@ async def ollama_web_search(query: str, max_results: int = 5):
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
                 text = await resp.text()
                 if resp.status == 200:
                     try:
@@ -249,8 +366,12 @@ async def ollama_web_search(query: str, max_results: int = 5):
 
 async def ollama_web_fetch(url: str):
     from bot.settings import OLLAMA_WEB_API_KEY
+
     if not OLLAMA_WEB_API_KEY:
-        return None, "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com"
+        return (
+            None,
+            "OLLAMA_WEB_API_KEY не установлен. Получите ключ на https://ollama.com",
+        )
 
     api_url = "https://ollama.com/api/web_fetch"
     headers = {
@@ -261,7 +382,12 @@ async def ollama_web_fetch(url: str):
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.post(
+                api_url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
                 text = await resp.text()
                 if resp.status == 200:
                     try:
@@ -277,6 +403,7 @@ async def ollama_web_fetch(url: str):
 
 async def send_alert(user_id: int, text: str):
     from bot.bot import bot as aiogram_bot
+
     try:
         await aiogram_bot.send_message(chat_id=user_id, text=text)
     except Exception as e:
@@ -293,6 +420,7 @@ async def _classify_memory(content: str) -> str:
     user is never blocked for more than ~10 seconds on classification.
     """
     import asyncio
+
     prompt = (
         "Ты классифицируешь заметки пользователя. Выбери одну категорию:\n"
         "- fact: факт о пользователе, проекте или мире\n"
@@ -309,7 +437,9 @@ async def _classify_memory(content: str) -> str:
     result = ""
     try:
         async with asyncio.timeout(10):
-            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.2):
+            async for is_done, chunk in generate_chat_completion(
+                messages, OLLAMA_MODEL, temperature=0.2
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -331,6 +461,7 @@ def _refresh_completion_system_prompt(user_id: int) -> None:
     saves a note or memory via cron handlers."""
     try:
         from bot.routers import completion
+
         completion.refresh_system_prompt(user_id)
     except Exception:
         pass
@@ -338,7 +469,10 @@ def _refresh_completion_system_prompt(user_id: int) -> None:
 
 # --- Reminders ---
 
-@router.message(lambda m: m.text and (m.text == "/remind" or m.text.startswith("/remind ")))
+
+@router.message(
+    lambda m: m.text and (m.text == "/remind" or m.text.startswith("/remind "))
+)
 async def cmd_remind(message: Message, state: FSMContext):
     await state.clear()
     if message.from_user is None:
@@ -352,8 +486,7 @@ async def cmd_remind(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "⏰ Чего напомнить?\n"
-            "Например: позвонить брокеру",
+            "⏰ Чего напомнить?\n" "Например: позвонить брокеру",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_remind)
@@ -374,8 +507,7 @@ async def btn_remind(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        "⏰ Чего напомнить?\n"
-        "Например: позвонить брокеру",
+        "⏰ Чего напомнить?\n" "Например: позвонить брокеру",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_remind)
@@ -431,7 +563,9 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
     if mode == "5m":
         trigger_at = now + timedelta(minutes=5)
     elif mode == "tomorrow9":
-        trigger_at = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        trigger_at = (now + timedelta(days=1)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
     elif mode == "daily9":
         trigger_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
         if trigger_at <= now:
@@ -481,11 +615,15 @@ async def process_remind_time(message: Message, state: FSMContext):
     data = await state.get_data()
     content = data.get("remind_content", "")
     if not content:
-        await message.answer("Ошибка: не найден текст напоминания.", reply_markup=cancel_keyboard)
+        await message.answer(
+            "Ошибка: не найден текст напоминания.", reply_markup=cancel_keyboard
+        )
         await state.clear()
         return
     time_text = message.text.strip()
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_text, tz_name=_user_tz(message.from_user.id))
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(
+        time_text, tz_name=_user_tz(message.from_user.id)
+    )
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
@@ -531,7 +669,11 @@ async def cmd_reminders(message: Message, state: FSMContext):
             "📒 Нет активных напоминаний и задач.\n\nДобавь через ⏰ Напомнить или 📋 Задача.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")],
+                    [
+                        InlineKeyboardButton(
+                            text="➕ Добавить напоминание", callback_data="add_reminder"
+                        )
+                    ],
                 ]
             ),
         )
@@ -540,20 +682,34 @@ async def cmd_reminders(message: Message, state: FSMContext):
     text = "📒 Активные напоминания и задачи:\n\n"
     buttons = []
     for idx, r in enumerate(reminders, 1):
-        time_str = _format_trigger(r.get('trigger_at'), message.from_user.id)
-        content = r.get('content', '')
-        rec = r.get('recurring')
-        is_task = r.get('action') == 'execute'
+        time_str = _format_trigger(r.get("trigger_at"), message.from_user.id)
+        content = r.get("content", "")
+        rec = r.get("recurring")
+        is_task = r.get("action") == "execute"
         mode = "🤖 Задача" if is_task else "⏰ Напоминание"
         rec_label = f" 🔁 {rec}" if rec else ""
         text += f"#{idx} {mode}{rec_label}\n🕐 {time_str}\n📝 {content}\n\n"
-        buttons.append([
-            InlineKeyboardButton(text=f"✏️ #{idx}", callback_data=f"edit_reminder:{r['id']}"),
-            InlineKeyboardButton(text=f"❌ #{idx}", callback_data=f"del_reminder:{r['id']}"),
-        ])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"✏️ #{idx}", callback_data=f"edit_reminder:{r['id']}"
+                ),
+                InlineKeyboardButton(
+                    text=f"❌ #{idx}", callback_data=f"del_reminder:{r['id']}"
+                ),
+            ]
+        )
 
-    buttons.append([InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")])
-    await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="➕ Добавить напоминание", callback_data="add_reminder"
+            )
+        ]
+    )
+    await message.answer(
+        text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
 
 
 @router.message(lambda m: m.text and m.text.startswith("/remind_cancel"))
@@ -570,8 +726,7 @@ async def cmd_remind_cancel(message: Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
-            "❌ Введи ID напоминания для отмены:\n"
-            "Пример: 3",
+            "❌ Введи ID напоминания для отмены:\n" "Пример: 3",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_remind_cancel)
@@ -580,13 +735,17 @@ async def cmd_remind_cancel(message: Message, state: FSMContext):
     try:
         rid = int(parts[1])
         user_reminders = db.get_user_reminders(message.from_user.id)
-        if not any(r['id'] == rid for r in user_reminders):
-            await message.answer("Нет доступа к этому напоминанию.", reply_markup=command_keyboard)
+        if not any(r["id"] == rid for r in user_reminders):
+            await message.answer(
+                "Нет доступа к этому напоминанию.", reply_markup=command_keyboard
+            )
             return
         db.disable_reminder(rid)
         await message.answer("✅ Напоминание удалено.", reply_markup=command_keyboard)
     except ValueError:
-        await message.answer("Укажи числовой ID напоминания.", reply_markup=command_keyboard)
+        await message.answer(
+            "Укажи числовой ID напоминания.", reply_markup=command_keyboard
+        )
 
 
 @router.message(BotStates.waiting_remind_cancel)
@@ -603,18 +762,23 @@ async def process_remind_cancel(message: Message, state: FSMContext):
     try:
         rid = int(message.text.strip())
         user_reminders = db.get_user_reminders(message.from_user.id)
-        if not any(r['id'] == rid for r in user_reminders):
-            await message.answer("Нет доступа к этому напоминанию.", reply_markup=cancel_keyboard)
+        if not any(r["id"] == rid for r in user_reminders):
+            await message.answer(
+                "Нет доступа к этому напоминанию.", reply_markup=cancel_keyboard
+            )
             await state.clear()
             return
         db.disable_reminder(rid)
         await message.answer("✅ Напоминание удалено.", reply_markup=command_keyboard)
     except ValueError:
-        await message.answer("Укажи числовой ID напоминания.", reply_markup=cancel_keyboard)
+        await message.answer(
+            "Укажи числовой ID напоминания.", reply_markup=cancel_keyboard
+        )
     await state.clear()
 
 
 # --- Tasks (AI-executed scheduled jobs) ---
+
 
 @router.message(lambda m: m.text and m.text == "/task")
 async def cmd_task(message: Message, state: FSMContext):
@@ -673,7 +837,9 @@ async def process_task_time_manual(message: Message, state: FSMContext):
     data = await state.get_data()
     content = data.get("task_content", "")
     time_str = message.text.strip()
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(time_str, tz_name=_user_tz(message.from_user.id))
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(
+        time_str, tz_name=_user_tz(message.from_user.id)
+    )
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: `через 5 минут`, `завтра в 9:00`, `каждый день в 7:00`, `2026-06-15 09:00`.",
@@ -726,7 +892,9 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
     elif mode == "1h":
         trigger_at = now + timedelta(hours=1)
     elif mode == "tomorrow9":
-        trigger_at = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        trigger_at = (now + timedelta(days=1)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
     elif mode == "daily7":
         trigger_at = now.replace(hour=7, minute=0, second=0, microsecond=0)
         if trigger_at <= now:
@@ -741,7 +909,10 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
         recurring = "weekday"
     elif mode == "friday18":
         days_ahead = (4 - now.weekday()) % 7
-        if days_ahead == 0 and now.replace(hour=18, minute=0, second=0, microsecond=0) <= now:
+        if (
+            days_ahead == 0
+            and now.replace(hour=18, minute=0, second=0, microsecond=0) <= now
+        ):
             days_ahead = 7
         trigger_at = now + timedelta(days=days_ahead)
         trigger_at = trigger_at.replace(hour=18, minute=0, second=0, microsecond=0)
@@ -776,12 +947,13 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
     )
     rec_label = f" ({recurring})" if recurring else ""
     from bot.bot import bot as aiogram_bot
+
     await aiogram_bot.send_message(
         chat_id=callback.from_user.id,
         text=f"✅ Задача добавлена\n"
-             f"🕐 Сработает: {_format_trigger(trigger_at, callback.from_user.id)}{rec_label}\n"
-             f"🤖 Режим: AI-выполнение\n"
-             f"📝 Текст: {content}",
+        f"🕐 Сработает: {_format_trigger(trigger_at, callback.from_user.id)}{rec_label}\n"
+        f"🤖 Режим: AI-выполнение\n"
+        f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
     await state.clear()
@@ -789,6 +961,7 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
 
 
 # --- Notes ---
+
 
 @router.message(lambda m: m.text and m.text.startswith("/note"))
 async def cmd_note(message: Message, state: FSMContext):
@@ -805,11 +978,12 @@ async def cmd_note(message: Message, state: FSMContext):
     if len(parts) < 2:
         notes = db.get_notes(message.from_user.id)
         if notes:
-            await message.answer(f"📝 Твои заметки:\n{notes}", reply_markup=command_keyboard)
+            await message.answer(
+                f"📝 Твои заметки:\n{notes}", reply_markup=command_keyboard
+            )
         else:
             await message.answer(
-                "📝 Что записать?\n"
-                "Пример: купить акции TSLA",
+                "📝 Что записать?\n" "Пример: купить акции TSLA",
                 reply_markup=cancel_keyboard,
             )
             await state.set_state(BotStates.waiting_note)
@@ -864,6 +1038,7 @@ async def process_note(message: Message, state: FSMContext):
 
 # --- Monitors ---
 
+
 @router.message(lambda m: m.text and m.text.startswith("/monitor_add"))
 async def cmd_monitor_add(message: Message, state: FSMContext):
     await state.clear()
@@ -886,8 +1061,7 @@ async def cmd_monitor_add(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        "🔍 Название монитора?\n"
-        "Например: Google",
+        "🔍 Название монитора?\n" "Например: Google",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_monitor_name)
@@ -935,8 +1109,7 @@ async def process_monitor_url(message: Message, state: FSMContext):
     await state.update_data(monitor_url=url)
     await state.set_state(BotStates.waiting_monitor_interval)
     await message.answer(
-        "🔍 Интервал проверки?\n"
-        "Например: 5m, 1h, или 300 (секунд)",
+        "🔍 Интервал проверки?\n" "Например: 5m, 1h, или 300 (секунд)",
         reply_markup=monitor_interval_keyboard(),
     )
 
@@ -976,30 +1149,50 @@ async def _finish_monitor_add(message: Message, state: FSMContext, user_id: int)
     url = data.get("monitor_url", "")
     interval = data.get("monitor_interval", 300)
     if not name or not url:
-        await message.answer("Ошибка: не хватает данных для монитора.", reply_markup=command_keyboard)
+        await message.answer(
+            "Ошибка: не хватает данных для монитора.", reply_markup=command_keyboard
+        )
         await state.clear()
         return
     await _process_monitor_add(message, name, url, interval)
     await state.clear()
 
 
-async def _process_monitor_add(message: Message, name: str, url: str, interval: int, expected_status: int = 200):
+async def _process_monitor_add(
+    message: Message, name: str, url: str, interval: int, expected_status: int = 200
+):
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
+
+    safe, reason = _is_safe_monitor_url(url)
+    if not safe:
+        await message.answer(
+            f"⚠️ URL не разрешён: {reason}",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    # Defensive floor: never let a monitor poll faster than once a minute,
+    # regardless of how the caller parsed the interval.
+    interval = max(60, int(interval))
 
     status_text = "⏳ Проверяю..."
     status_msg = await message.answer(status_text)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 status = resp.status
                 if status == expected_status:
                     status_text = f"✅ HTTP {status} — сайт доступен"
                 else:
                     status_text = f"⚠️ HTTP {status} (ожидался {expected_status})"
     except Exception as e:
-        status_text = f"⚠️ Ошибка: {str(e)[:100]}\nМонитор добавлен, но URL может быть недоступен."
+        status_text = (
+            f"⚠️ Ошибка: {str(e)[:100]}\nМонитор добавлен, но URL может быть недоступен."
+        )
 
     mid = db.add_monitor(
         user_id=message.from_user.id,
@@ -1037,7 +1230,13 @@ async def cmd_monitors(message: Message, state: FSMContext):
         await message.answer(
             "Нет активных мониторов.",
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить монитор", callback_data="add_monitor")]]
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="➕ Добавить монитор", callback_data="add_monitor"
+                        )
+                    ]
+                ]
             ),
         )
         return
@@ -1045,9 +1244,9 @@ async def cmd_monitors(message: Message, state: FSMContext):
     text = "🔍 Активные мониторы:\n\n"
     buttons = []
     for idx, m in enumerate(monitors, 1):
-        ls = m.get('last_status')
-        expected = m.get('expected_status', 200)
-        if ls is None or ls == '':
+        ls = m.get("last_status")
+        expected = m.get("expected_status", 200)
+        if ls is None or ls == "":
             status = "⏳ не проверялся"
         elif ls == 0:
             status = "❌ недоступен"
@@ -1055,13 +1254,23 @@ async def cmd_monitors(message: Message, state: FSMContext):
             status = f"✅ HTTP {ls}"
         else:
             status = f"⚠️ HTTP {ls} (ожидался {expected})"
-        interval_str = _format_interval(m.get('check_interval', 300))
+        interval_str = _format_interval(m.get("check_interval", 300))
         text += f"#{idx} | {m['name']}\n"
         text += f"   {status} | {interval_str} | {m['url']}\n\n"
-        buttons.append([InlineKeyboardButton(text=f"🗑 Удалить #{idx}", callback_data=f"del_monitor:{m['id']}")])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Удалить #{idx}", callback_data=f"del_monitor:{m['id']}"
+                )
+            ]
+        )
 
-    buttons.append([InlineKeyboardButton(text="➕ Добавить монитор", callback_data="add_monitor")])
-    await message.answer(text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    buttons.append(
+        [InlineKeyboardButton(text="➕ Добавить монитор", callback_data="add_monitor")]
+    )
+    await message.answer(
+        text.strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
     await message.answer("Главное меню:", reply_markup=command_keyboard)
 
 
@@ -1079,8 +1288,7 @@ async def cmd_monitor_remove(message: Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
-            "🗑 Введи ID монитора для удаления:\n"
-            "Пример: 2",
+            "🗑 Введи ID монитора для удаления:\n" "Пример: 2",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_monitor_remove)
@@ -1089,11 +1297,15 @@ async def cmd_monitor_remove(message: Message, state: FSMContext):
     try:
         mid = int(parts[1])
         user_monitors = db.get_monitors(message.from_user.id)
-        if not any(m['id'] == mid for m in user_monitors):
-            await message.answer("Нет доступа к этому монитору.", reply_markup=command_keyboard)
+        if not any(m["id"] == mid for m in user_monitors):
+            await message.answer(
+                "Нет доступа к этому монитору.", reply_markup=command_keyboard
+            )
             return
         db.remove_monitor(mid)
-        await message.answer(f"✅ Монитор #{mid} удалён.", reply_markup=command_keyboard)
+        await message.answer(
+            f"✅ Монитор #{mid} удалён.", reply_markup=command_keyboard
+        )
     except ValueError:
         await message.answer("Укажи числовой ID.", reply_markup=command_keyboard)
 
@@ -1112,18 +1324,23 @@ async def process_monitor_remove(message: Message, state: FSMContext):
     try:
         mid = int(message.text.strip())
         user_monitors = db.get_monitors(message.from_user.id)
-        if not any(m['id'] == mid for m in user_monitors):
-            await message.answer("Нет доступа к этому монитору.", reply_markup=cancel_keyboard)
+        if not any(m["id"] == mid for m in user_monitors):
+            await message.answer(
+                "Нет доступа к этому монитору.", reply_markup=cancel_keyboard
+            )
             await state.clear()
             return
         db.remove_monitor(mid)
-        await message.answer(f"✅ Монитор #{mid} удалён.", reply_markup=command_keyboard)
+        await message.answer(
+            f"✅ Монитор #{mid} удалён.", reply_markup=command_keyboard
+        )
     except ValueError:
         await message.answer("Укажи числовой ID.", reply_markup=cancel_keyboard)
     await state.clear()
 
 
 # --- Report ---
+
 
 @router.message(lambda m: m.text and m.text.startswith("/report"))
 @router.message(F.text == "📊 Отчёт")
@@ -1159,6 +1376,7 @@ async def cmd_report(message: Message, state: FSMContext):
 
 # --- Memory ---
 
+
 @router.message(lambda m: m.text and m.text == "/memory")
 @router.message(F.text == "🧠 Память")
 async def cmd_memory(message: Message, state: FSMContext):
@@ -1191,8 +1409,7 @@ async def cmd_memory_add(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
         await message.answer(
-            "🧠 Что запомнить?\n"
-            "Например: я люблю краткие ответы",
+            "🧠 Что запомнить?\n" "Например: я люблю краткие ответы",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_memory_add)
@@ -1210,10 +1427,13 @@ async def cmd_memory_add(message: Message, state: FSMContext):
 
     mid = db.add_memory(message.from_user.id, category, content)
     _refresh_completion_system_prompt(message.from_user.id)
-    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+    cat_names = {
+        "fact": "📌 Факт",
+        "preference": "❤️ Предпочтение",
+        "note": "📝 Заметка",
+    }
     await message.answer(
-        f"✅ Сохранено: {cat_names.get(category, category)}\n"
-        f"#{mid} | {content}",
+        f"✅ Сохранено: {cat_names.get(category, category)}\n" f"#{mid} | {content}",
         reply_markup=command_keyboard,
     )
 
@@ -1236,7 +1456,11 @@ async def process_memory_add(message: Message, state: FSMContext):
 
     data = await state.get_data()
     category = data.get("memory_category", "auto")
-    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+    cat_names = {
+        "fact": "📌 Факт",
+        "preference": "❤️ Предпочтение",
+        "note": "📝 Заметка",
+    }
 
     # Memory is not for scheduled actions. Detect time-like requests and redirect.
     time_patterns = [
@@ -1273,14 +1497,16 @@ async def process_memory_add(message: Message, state: FSMContext):
     mid = db.add_memory(message.from_user.id, category, content)
     _refresh_completion_system_prompt(message.from_user.id)
     await message.answer(
-        f"✅ Сохранено: {cat_names.get(category, category)}\n"
-        f"#{mid} | {content}",
+        f"✅ Сохранено: {cat_names.get(category, category)}\n" f"#{mid} | {content}",
         reply_markup=command_keyboard,
     )
     await state.clear()
 
 
-@router.message(lambda m: m.text and (m.text == "/memory_summary" or m.text.startswith("/memory_summary")))
+@router.message(
+    lambda m: m.text
+    and (m.text == "/memory_summary" or m.text.startswith("/memory_summary"))
+)
 async def cmd_memory_summary(message: Message, state: FSMContext):
     await state.clear()
     if message.from_user is None:
@@ -1291,7 +1517,9 @@ async def cmd_memory_summary(message: Message, state: FSMContext):
     await _send_memory_summary(message.from_user.id, message)
 
 
-@router.message(lambda m: m.text and (m.text == "/cleanup" or m.text.startswith("/cleanup")))
+@router.message(
+    lambda m: m.text and (m.text == "/cleanup" or m.text.startswith("/cleanup"))
+)
 async def cmd_cleanup(message: Message, state: FSMContext):
     await state.clear()
     if message.from_user is None:
@@ -1302,6 +1530,7 @@ async def cmd_cleanup(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
     from bot.services import retention as retention_service
+
     docs, images = retention_service.cleanup_user_retention(message.from_user.id)
     await message.answer(
         f"🗑 Очистка завершена:\n"
@@ -1325,8 +1554,7 @@ async def cmd_memory_remove(message: Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
-            "🗑 Введи ID факта для удаления:\n"
-            "Пример: 5",
+            "🗑 Введи ID факта для удаления:\n" "Пример: 5",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_memory_remove)
@@ -1335,8 +1563,10 @@ async def cmd_memory_remove(message: Message, state: FSMContext):
     try:
         mid = int(parts[1])
         user_memories = db.get_memories(message.from_user.id)
-        if not any(m['id'] == mid for m in user_memories):
-            await message.answer("Нет доступа к этому факту.", reply_markup=command_keyboard)
+        if not any(m["id"] == mid for m in user_memories):
+            await message.answer(
+                "Нет доступа к этому факту.", reply_markup=command_keyboard
+            )
             return
         db.remove_memory(mid)
         await message.answer(f"✅ Факт #{mid} удалён.", reply_markup=command_keyboard)
@@ -1358,8 +1588,10 @@ async def process_memory_remove(message: Message, state: FSMContext):
     try:
         mid = int(message.text.strip())
         user_memories = db.get_memories(message.from_user.id)
-        if not any(m['id'] == mid for m in user_memories):
-            await message.answer("Нет доступа к этому факту.", reply_markup=cancel_keyboard)
+        if not any(m["id"] == mid for m in user_memories):
+            await message.answer(
+                "Нет доступа к этому факту.", reply_markup=cancel_keyboard
+            )
             await state.clear()
             return
         db.remove_memory(mid)
@@ -1404,8 +1636,7 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
         await state.set_state(BotStates.waiting_memory_add)
         await state.update_data(memory_category="fact")
         await callback.message.answer(
-            "📌 Какой факт сохранить?\n"
-            "Например: я работаю над проектом X",
+            "📌 Какой факт сохранить?\n" "Например: я работаю над проектом X",
             reply_markup=cancel_keyboard,
         )
         await callback.answer("Добавляем факт")
@@ -1415,8 +1646,7 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
         await state.set_state(BotStates.waiting_memory_add)
         await state.update_data(memory_category="preference")
         await callback.message.answer(
-            "❤️ Какое предпочтение сохранить?\n"
-            "Например: я люблю краткие ответы",
+            "❤️ Какое предпочтение сохранить?\n" "Например: я люблю краткие ответы",
             reply_markup=cancel_keyboard,
         )
         await callback.answer("Добавляем предпочтение")
@@ -1426,8 +1656,7 @@ async def cb_memory_menu(callback: CallbackQuery, state: FSMContext):
         await state.set_state(BotStates.waiting_memory_add)
         await state.update_data(memory_category="note")
         await callback.message.answer(
-            "📝 Какую заметку сохранить?\n"
-            "Например: купить акции TSLA",
+            "📝 Какую заметку сохранить?\n" "Например: купить акции TSLA",
             reply_markup=cancel_keyboard,
         )
         await callback.answer("Добавляем заметку")
@@ -1448,7 +1677,11 @@ def _format_memory_item(idx: int, memory: dict) -> str:
     }
     cat = memory.get("category", "fact")
     content = memory.get("content", "")
-    text = content if len(content) <= MAX_MEMORY_ITEM_LENGTH else content[:MAX_MEMORY_ITEM_LENGTH].rsplit(" ", 1)[0] + "..."
+    text = (
+        content
+        if len(content) <= MAX_MEMORY_ITEM_LENGTH
+        else content[:MAX_MEMORY_ITEM_LENGTH].rsplit(" ", 1)[0] + "..."
+    )
     return f"#{idx} | {cat_names.get(cat, cat)}\n{text}"
 
 
@@ -1471,7 +1704,11 @@ async def _show_memories(
     all_memories = db.get_memories(user_id)
     filtered = _filter_memories(all_memories, category)
     if not filtered:
-        text = "Нет сохранённых записей." if category == "all" else f"Нет записей категории «{category}»."
+        text = (
+            "Нет сохранённых записей."
+            if category == "all"
+            else f"Нет записей категории «{category}»."
+        )
         if edit and message.text is not None:
             try:
                 await message.edit_text(text, reply_markup=memory_menu_keyboard())
@@ -1484,7 +1721,7 @@ async def _show_memories(
     total_pages = max(1, (len(filtered) + MEMORY_PAGE_SIZE - 1) // MEMORY_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     start = page * MEMORY_PAGE_SIZE
-    page_memories = filtered[start:start + MEMORY_PAGE_SIZE]
+    page_memories = filtered[start : start + MEMORY_PAGE_SIZE]
 
     lines = ["🧠 Память:", ""]
     buttons: list[list[InlineKeyboardButton]] = []
@@ -1493,13 +1730,22 @@ async def _show_memories(
         global_idx += 1
         lines.append(_format_memory_item(global_idx, m))
         lines.append("")
-        buttons.append([InlineKeyboardButton(text=f"🗑 Удалить #{global_idx}", callback_data=f"del_memory:{m['id']}")])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Удалить #{global_idx}",
+                    callback_data=f"del_memory:{m['id']}",
+                )
+            ]
+        )
 
     keyboard_rows = buttons + memory_filter_keyboard(category).inline_keyboard
     paginator = memory_pagination_keyboard(page, total_pages, category)
     if paginator:
         keyboard_rows.extend(paginator.inline_keyboard)
-    keyboard_rows.append([InlineKeyboardButton(text="➕ Добавить", callback_data="memory_menu:add_auto")])
+    keyboard_rows.append(
+        [InlineKeyboardButton(text="➕ Добавить", callback_data="memory_menu:add_auto")]
+    )
 
     text = "\n".join(lines).strip()
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
@@ -1514,6 +1760,7 @@ async def _show_memories(
 
 async def _send_memory_summary(user_id: int, message: Message):
     from bot.services.kb import summarize_kb
+
     text = await summarize_kb(user_id)
     await message.answer(text, reply_markup=memory_menu_keyboard())
 
@@ -1532,7 +1779,9 @@ async def cb_memory_page(callback: CallbackQuery):
     except (ValueError, IndexError):
         await callback.answer("Ошибка данных", show_alert=True)
         return
-    await _show_memories(callback.from_user.id, callback.message, page=page, category=category, edit=True)
+    await _show_memories(
+        callback.from_user.id, callback.message, page=page, category=category, edit=True
+    )
     await callback.answer()
 
 
@@ -1544,11 +1793,14 @@ async def cb_memory_filter(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
     category = callback.data.split(":", 1)[1] or "all"
-    await _show_memories(callback.from_user.id, callback.message, page=0, category=category, edit=True)
+    await _show_memories(
+        callback.from_user.id, callback.message, page=0, category=category, edit=True
+    )
     await callback.answer(f"Фильтр: {category}")
 
 
 # --- Inline delete callbacks ---
+
 
 @router.callback_query(F.data.startswith("del_reminder:"))
 async def cb_del_reminder(callback: CallbackQuery):
@@ -1563,7 +1815,7 @@ async def cb_del_reminder(callback: CallbackQuery):
     try:
         rid = int(callback.data.split(":", 1)[1])
         user_reminders = db.get_user_reminders(callback.from_user.id)
-        if not any(r['id'] == rid for r in user_reminders):
+        if not any(r["id"] == rid for r in user_reminders):
             await callback.answer("Нет доступа", show_alert=True)
             return
         db.disable_reminder(rid)
@@ -1594,11 +1846,11 @@ async def cb_edit_reminder(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Неверный ID", show_alert=True)
         return
     reminder = db.get_reminder(rid)
-    if not reminder or reminder['user_id'] != callback.from_user.id:
+    if not reminder or reminder["user_id"] != callback.from_user.id:
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    is_task = reminder.get('action') == 'execute'
+    is_task = reminder.get("action") == "execute"
     label = "задачу" if is_task else "напоминание"
     await callback.message.answer(
         f"✏️ Редактировать {label}\n\n"
@@ -1607,8 +1859,16 @@ async def cb_edit_reminder(callback: CallbackQuery, state: FSMContext):
         f"Что менять?",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_rcontent:{rid}")],
-                [InlineKeyboardButton(text="🕐 Время", callback_data=f"edit_rtime:{rid}")],
+                [
+                    InlineKeyboardButton(
+                        text="📝 Текст", callback_data=f"edit_rcontent:{rid}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🕐 Время", callback_data=f"edit_rtime:{rid}"
+                    )
+                ],
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
             ]
         ),
@@ -1669,13 +1929,17 @@ async def process_edit_reminder_content(message: Message, state: FSMContext):
     data = await state.get_data()
     rid = data.get("edit_reminder_id")
     reminder = db.get_reminder(rid) if rid else None
-    if not reminder or reminder['user_id'] != message.from_user.id:
-        await message.answer("Нет доступа к этой записи.", reply_markup=command_keyboard)
+    if not reminder or reminder["user_id"] != message.from_user.id:
+        await message.answer(
+            "Нет доступа к этой записи.", reply_markup=command_keyboard
+        )
         await state.clear()
         return
     new_content = message.text.strip()
     if not new_content:
-        await message.answer("Текст не может быть пустым.", reply_markup=cancel_keyboard)
+        await message.answer(
+            "Текст не может быть пустым.", reply_markup=cancel_keyboard
+        )
         return
     db.update_reminder_content(rid, new_content)
     await message.answer(
@@ -1703,11 +1967,15 @@ async def process_edit_reminder_time(message: Message, state: FSMContext):
     data = await state.get_data()
     rid = data.get("edit_reminder_id")
     reminder = db.get_reminder(rid) if rid else None
-    if not reminder or reminder['user_id'] != message.from_user.id:
-        await message.answer("Нет доступа к этой записи.", reply_markup=command_keyboard)
+    if not reminder or reminder["user_id"] != message.from_user.id:
+        await message.answer(
+            "Нет доступа к этой записи.", reply_markup=command_keyboard
+        )
         await state.clear()
         return
-    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(message.text.strip(), tz_name=_user_tz(message.from_user.id))
+    trigger_at, recurring, parsed = reminders_service.parse_reminder_strict(
+        message.text.strip(), tz_name=_user_tz(message.from_user.id)
+    )
     if not parsed:
         await message.answer(
             "❓ Не понял время. Примеры: «через 5 минут», «завтра в 9:00», «каждый день в 7:00».",
@@ -1736,7 +2004,7 @@ async def cb_del_monitor(callback: CallbackQuery):
     try:
         mid = int(callback.data.split(":", 1)[1])
         user_monitors = db.get_monitors(callback.from_user.id)
-        if not any(m['id'] == mid for m in user_monitors):
+        if not any(m["id"] == mid for m in user_monitors):
             await callback.answer("Нет доступа", show_alert=True)
             return
         db.remove_monitor(mid)
@@ -1763,7 +2031,7 @@ async def cb_del_memory(callback: CallbackQuery):
     try:
         mid = int(callback.data.split(":", 1)[1])
         user_memories = db.get_memories(callback.from_user.id)
-        if not any(m['id'] == mid for m in user_memories):
+        if not any(m["id"] == mid for m in user_memories):
             await callback.answer("Нет доступа", show_alert=True)
             return
         db.remove_memory(mid)
@@ -1789,7 +2057,11 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
         return
 
     category = callback.data.split(":", 1)[1]
-    cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+    cat_names = {
+        "fact": "📌 Факт",
+        "preference": "❤️ Предпочтение",
+        "note": "📝 Заметка",
+    }
 
     if category == "auto":
         await callback.answer("Анализирую текст...")
@@ -1814,8 +2086,7 @@ async def cb_select_memory_category(callback: CallbackQuery, state: FSMContext):
     mid = db.add_memory(callback.from_user.id, category, content)
     _refresh_completion_system_prompt(callback.from_user.id)
     await callback.message.answer(
-        f"✅ Сохранено: {cat_names.get(category, category)}\n"
-        f"#{mid} | {content}",
+        f"✅ Сохранено: {cat_names.get(category, category)}\n" f"#{mid} | {content}",
         reply_markup=command_keyboard,
     )
     await state.clear()
@@ -1832,8 +2103,7 @@ async def cb_add_memory(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer("Добавление записи")
     await callback.message.answer(
-        "🧠 Что запомнить?\n"
-        "Например: я люблю краткие ответы",
+        "🧠 Что запомнить?\n" "Например: я люблю краткие ответы",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_memory_add)
@@ -1850,8 +2120,7 @@ async def cb_add_reminder(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer("Добавление напоминания")
     await callback.message.answer(
-        "⏰ Чего напомнить?\n"
-        "Например: позвонить брокеру",
+        "⏰ Чего напомнить?\n" "Например: позвонить брокеру",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_remind)
@@ -1867,24 +2136,25 @@ async def cb_add_monitor(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer("Добавление монитора")
     await callback.message.answer(
-        "🔍 Название монитора?\n"
-        "Например: Google",
+        "🔍 Название монитора?\n" "Например: Google",
         reply_markup=cancel_keyboard,
     )
     await state.set_state(BotStates.waiting_monitor_name)
 
 
 # Register button handlers for instant FSM routing
-_BUTTON_HANDLERS.update({
-    "✨ Умный запрос": lambda msg, st: btn_smart_block(msg, st),
-    "⏰ Напомнить": lambda msg, st: btn_remind(msg, st),
-    "📒 Список": lambda msg, st: cmd_reminders(msg, st),
-    "🧠 Память": lambda msg, st: cmd_memory(msg, st),
-    "📚 База": lambda msg, st: btn_kb(msg, st),
-    "📊 Отчёт": lambda msg, st: cmd_report(msg),
-    "❓ Помощь": lambda msg, st: cmd_help(msg),
-    "⚙️ Настройки": lambda msg, st: cmd_settings(msg, st),
-})
+_BUTTON_HANDLERS.update(
+    {
+        "✨ Умный запрос": lambda msg, st: btn_smart_block(msg, st),
+        "⏰ Напомнить": lambda msg, st: btn_remind(msg, st),
+        "📒 Список": lambda msg, st: cmd_reminders(msg, st),
+        "🧠 Память": lambda msg, st: cmd_memory(msg, st),
+        "📚 База": lambda msg, st: btn_kb(msg, st),
+        "📊 Отчёт": lambda msg, st: cmd_report(msg),
+        "❓ Помощь": lambda msg, st: cmd_help(msg),
+        "⚙️ Настройки": lambda msg, st: cmd_settings(msg, st),
+    }
+)
 
 
 @router.callback_query(F.data == "cancel")
@@ -1941,7 +2211,9 @@ async def _process_weather(message: Message, raw: str):
     ).strip(" ,.;-—")
 
     if not city:
-        await message.answer("🌤 Не понял город. Пример: Москва", reply_markup=command_keyboard)
+        await message.answer(
+            "🌤 Не понял город. Пример: Москва", reply_markup=command_keyboard
+        )
         return
 
     label = "прогноз" if is_forecast else "погоду"
@@ -1951,7 +2223,9 @@ async def _process_weather(message: Message, raw: str):
     else:
         text, error = await get_weather(city)
     if error:
-        await message.answer(f"❌ Ошибка погоды: {error}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка погоды: {error}", reply_markup=command_keyboard
+        )
         return
     await message.answer(text, reply_markup=command_keyboard)
 
@@ -2031,6 +2305,7 @@ async def _process_kb(message: Message, query: str):
         await message.answer("Введи поисковый запрос.", reply_markup=cancel_keyboard)
         return
     from bot.services.kb import search_kb_with_web_fallback
+
     text, hits, used_web = await search_kb_with_web_fallback(
         message.from_user.id, query, limit=5
     )
@@ -2048,6 +2323,7 @@ async def _process_kb(message: Message, query: str):
 
 # --- News ---
 
+
 def _format_search_results(query: str, items: list[dict]) -> str:
     """Render Ollama web-search results in the same clean style as RSS news."""
     text = f"🔍 {query}\n\n"
@@ -2059,6 +2335,7 @@ def _format_search_results(query: str, items: list[dict]) -> str:
         if url:
             try:
                 from urllib.parse import urlparse
+
                 domain = urlparse(url).netloc.replace("www.", "")
                 if domain:
                     source = f"🌐 {domain}"
@@ -2090,6 +2367,7 @@ async def _process_news(message: Message, topic: str | None = None):
     await message.answer(f"📰 Ищу новости: {label}...")
 
     from bot.services.rss_news import get_fresh_news
+
     text, items, source = await get_fresh_news(user_id, topic=topic, limit=5)
     if not text:
         await message.answer(
@@ -2112,6 +2390,7 @@ async def _process_digest(message: Message):
     await message.answer("📰 Собираю персональный дайджест...")
 
     from bot.services.news_categories import get_personalized_digest
+
     text = await get_personalized_digest(user_id)
     await message.answer(text, reply_markup=command_keyboard)
 
@@ -2182,6 +2461,7 @@ async def cmd_news_subscribe(message: Message, state: FSMContext):
         return
 
     from bot.services.news_categories import add_user_category
+
     cats, added = add_user_category(message.from_user.id, parts[1])
     if added:
         await message.answer(
@@ -2216,6 +2496,7 @@ async def cmd_news_unsubscribe(message: Message, state: FSMContext):
         return
 
     from bot.services.news_categories import remove_user_category
+
     cats, removed = remove_user_category(message.from_user.id, parts[1])
     if removed:
         await message.answer(
@@ -2241,6 +2522,7 @@ async def cmd_docs(message: Message, state: FSMContext):
         return
 
     from bot.services import documents as documents_service
+
     docs = documents_service.get_user_documents(message.from_user.id)
     if not docs:
         await message.answer(
@@ -2281,13 +2563,18 @@ async def cmd_forget_doc(message: Message, state: FSMContext):
     try:
         doc_id = int(parts[1])
     except ValueError:
-        await message.answer("Укажи числовой ID документа.", reply_markup=command_keyboard)
+        await message.answer(
+            "Укажи числовой ID документа.", reply_markup=command_keyboard
+        )
         return
 
     from bot.services import documents as documents_service
+
     doc = documents_service.get_document(doc_id, user_id=message.from_user.id)
     if not doc:
-        await message.answer("⚠️ Документ не найден или нет доступа.", reply_markup=command_keyboard)
+        await message.answer(
+            "⚠️ Документ не найден или нет доступа.", reply_markup=command_keyboard
+        )
         return
 
     if documents_service.delete_document(doc_id, user_id=message.from_user.id):
@@ -2297,7 +2584,9 @@ async def cmd_forget_doc(message: Message, state: FSMContext):
             parse_mode="Markdown",
         )
     else:
-        await message.answer("⚠️ Не удалось удалить документ.", reply_markup=command_keyboard)
+        await message.answer(
+            "⚠️ Не удалось удалить документ.", reply_markup=command_keyboard
+        )
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("suggest:"))
@@ -2320,6 +2609,7 @@ async def cb_suggest(callback: CallbackQuery, state: FSMContext):
         return
 
     from bot.services import reminder_suggest as reminder_suggest_service
+
     parts = data.split(":", 4)
     if len(parts) < 3:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -2329,7 +2619,9 @@ async def cb_suggest(callback: CallbackQuery, state: FSMContext):
     time_text = parts[4] if len(parts) > 4 else ""
 
     if item_type == "reminder":
-        result = await reminder_suggest_service.create_reminder(user_id, content, time_text)
+        result = await reminder_suggest_service.create_reminder(
+            user_id, content, time_text
+        )
     elif item_type == "task":
         result = await reminder_suggest_service.create_task(user_id, content, time_text)
     else:
@@ -2354,6 +2646,7 @@ async def cb_reminder_done(callback: CallbackQuery, state: FSMContext):
 
     data = callback.data
     from bot.services import reminder_completion as reminder_completion_service
+
     if data == "reminder_done:dismiss":
         await callback.message.edit_text("👌 Оставлю напоминание активным.")
         await callback.answer("Отменено")
@@ -2382,6 +2675,7 @@ async def cmd_images(message: Message, state: FSMContext):
         return
 
     from bot.services import images as images_service
+
     images = images_service.get_user_images(message.from_user.id)
     if not images:
         await message.answer(
@@ -2417,9 +2711,7 @@ async def cmd_forget_image(message: Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
-            "❌ Введи ID фото:\n"
-            "Пример: /forget_image 3\n\n"
-            "Список фото: /images",
+            "❌ Введи ID фото:\n" "Пример: /forget_image 3\n\n" "Список фото: /images",
             reply_markup=command_keyboard,
         )
         return
@@ -2431,9 +2723,12 @@ async def cmd_forget_image(message: Message, state: FSMContext):
         return
 
     from bot.services import images as images_service
+
     img = images_service.get_image(image_id, user_id=message.from_user.id)
     if not img:
-        await message.answer("⚠️ Фото не найдено или нет доступа.", reply_markup=command_keyboard)
+        await message.answer(
+            "⚠️ Фото не найдено или нет доступа.", reply_markup=command_keyboard
+        )
         return
 
     if images_service.delete_image(image_id, user_id=message.from_user.id):
@@ -2442,30 +2737,12 @@ async def cmd_forget_image(message: Message, state: FSMContext):
             reply_markup=command_keyboard,
         )
     else:
-        await message.answer("⚠️ Не удалось удалить фото.", reply_markup=command_keyboard)
+        await message.answer(
+            "⚠️ Не удалось удалить фото.", reply_markup=command_keyboard
+        )
 
 
 # --- Search ---
-
-@router.message(lambda m: m.text and m.text.startswith("/search"))
-async def cmd_search(message: Message, state: FSMContext):
-    await state.clear()
-    if message.from_user is None:
-        return
-    if not _is_allowed(message.from_user.id):
-        return
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer(
-            "🔍 Введи поисковый запрос:\n"
-            "Пример: последние новости о Tesla",
-            reply_markup=cancel_keyboard,
-        )
-        await state.set_state(BotStates.waiting_search)
-        return
-
-    await _process_search(message, parts[1].strip())
 
 
 @router.message(F.text == "✨ Умный запрос")
@@ -2497,8 +2774,7 @@ async def cmd_search(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "🔍 Введи поисковый запрос:\n"
-            "Пример: последние новости о Tesla",
+            "🔍 Введи поисковый запрос:\n" "Пример: последние новости о Tesla",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_search)
@@ -2511,7 +2787,9 @@ async def _process_search(message: Message, query: str):
 
     result, error = await ollama_web_search(query, max_results=5)
     if error:
-        await message.answer(f"❌ Ошибка поиска: {error}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка поиска: {error}", reply_markup=command_keyboard
+        )
         return
 
     if not result or "results" not in result:
@@ -2544,6 +2822,7 @@ async def process_search(message: Message, state: FSMContext):
 
 # --- Fetch ---
 
+
 @router.message(lambda m: m.text and m.text.startswith("/fetch"))
 async def cmd_fetch(message: Message, state: FSMContext):
     await state.clear()
@@ -2555,8 +2834,7 @@ async def cmd_fetch(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "📄 Введи URL для загрузки:\n"
-            "Пример: https://example.com/article",
+            "📄 Введи URL для загрузки:\n" "Пример: https://example.com/article",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_fetch)
@@ -2570,7 +2848,9 @@ async def _process_fetch(message: Message, url: str):
 
     result, error = await ollama_web_fetch(url)
     if error:
-        await message.answer(f"❌ Ошибка загрузки: {error}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка загрузки: {error}", reply_markup=command_keyboard
+        )
         return
 
     title = result.get("title", "Без названия")
@@ -2605,6 +2885,7 @@ async def process_fetch(message: Message, state: FSMContext):
 
 
 # --- Help ---
+
 
 async def cmd_help(message: Message):
     if message.from_user is None:
@@ -2668,6 +2949,7 @@ _BUTTON_HANDLERS["📒 Список"] = cmd_reminders
 
 
 # --- Admin user management ---
+
 
 def _admin_required(message: Message) -> bool:
     if message.from_user is None:
@@ -2772,7 +3054,11 @@ async def cb_admin_action(callback: CallbackQuery, state: FSMContext):
         return
 
     new_status = "approved" if action == "approve" else "rejected"
-    ok = db.set_user_status(target_id, new_status, approved_by=callback.from_user.id) if db else False
+    ok = (
+        db.set_user_status(target_id, new_status, approved_by=callback.from_user.id)
+        if db
+        else False
+    )
     if not ok:
         await callback.answer("Не удалось обновить статус.", show_alert=True)
         return
@@ -2832,9 +3118,15 @@ async def _admin_set_status(message: Message, state: FSMContext, status: str):
         )
         return
 
-    ok = db.set_user_status(target_id, status, approved_by=message.from_user.id) if db else False
+    ok = (
+        db.set_user_status(target_id, status, approved_by=message.from_user.id)
+        if db
+        else False
+    )
     if not ok:
-        await message.answer("Не удалось обновить статус.", reply_markup=command_keyboard)
+        await message.answer(
+            "Не удалось обновить статус.", reply_markup=command_keyboard
+        )
         return
 
     await message.answer(
@@ -2916,6 +3208,15 @@ async def cmd_admin_remove(message: Message, state: FSMContext):
         )
         return
 
+    # Drop any in-memory chat/session state for the removed user so they can't
+    # keep interacting with cached context even if their DB record is gone.
+    try:
+        from bot.routers import completion
+
+        completion._delete_chat(target_id)
+    except Exception:
+        pass
+
     await message.answer(
         f"🗑 Пользователь `{target_id}` и все его данные удалены.",
         reply_markup=command_keyboard,
@@ -2930,7 +3231,6 @@ async def _admin_set_admin(message: Message, state: FSMContext, is_admin_flag: b
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        action_text = "сделать админом" if is_admin_flag else "снять админа"
         await message.answer(
             f"Укажи ID: /admin_{'promote' if is_admin_flag else 'demote'} <id>",
             reply_markup=command_keyboard,
@@ -2956,7 +3256,9 @@ async def _admin_set_admin(message: Message, state: FSMContext, is_admin_flag: b
 
     ok = db.set_user_admin(target_id, is_admin_flag) if db else False
     if not ok:
-        await message.answer("Не удалось обновить права.", reply_markup=command_keyboard)
+        await message.answer(
+            "Не удалось обновить права.", reply_markup=command_keyboard
+        )
         return
 
     await message.answer(

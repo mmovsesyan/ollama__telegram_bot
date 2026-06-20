@@ -29,10 +29,15 @@ class MemoryTool(BaseTool):
             return ToolResult(text="База данных недоступна.", success=False)
         # Late import to avoid circular: cron.py imports services, which imports tools.
         from bot.routers.cron import _classify_memory
+
         category = await _classify_memory(content)
         mid = context.db.add_memory(context.user_id, category, content)
         _refresh_active_chat_system_prompt(context.user_id)
-        cat_names = {"fact": "📌 Факт", "preference": "❤️ Предпочтение", "note": "📝 Заметка"}
+        cat_names = {
+            "fact": "📌 Факт",
+            "preference": "❤️ Предпочтение",
+            "note": "📝 Заметка",
+        }
         return ToolResult(
             text=f"✅ Сохранено: {cat_names.get(category, category)}\n#{mid} | {content}",
         )
@@ -44,6 +49,7 @@ def _refresh_active_chat_system_prompt(user_id: int) -> None:
     module load time."""
     try:
         from bot.routers import completion
+
         completion.refresh_system_prompt(user_id)
     except Exception:
         pass
@@ -65,6 +71,12 @@ class MonitorTool(BaseTool):
             return ToolResult(text="База данных недоступна.", success=False)
         if "://" not in url:
             url = f"http://{url}"
+        # Late import to avoid circular imports at module load time.
+        from bot.routers.cron import _is_safe_monitor_url
+
+        safe, reason = _is_safe_monitor_url(url)
+        if not safe:
+            return ToolResult(text=f"⚠️ URL не разрешён: {reason}", success=False)
         # Clamp interval: never let APScheduler poll faster than once a minute,
         # else a hostile/buggy LLM response could trigger a tight loop.
         raw_interval = context.args.interval if context.args.interval else 300
@@ -92,4 +104,5 @@ class PlanTool(BaseTool):
     async def execute(self, context: ToolContext) -> ToolResult:
         # Delegate to ChatTool to avoid duplicating the streaming logic.
         from bot.intent.tools.chat import ChatTool
+
         return await ChatTool().execute(context)

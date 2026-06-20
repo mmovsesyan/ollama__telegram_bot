@@ -5,7 +5,6 @@ import pytest
 from bot.db import Database
 from bot.routers import cron as cron_module
 from bot.services import news_categories as nc_module
-from bot.states import BotStates
 
 
 def _message(user_id: int = 42, text: str = ""):
@@ -111,3 +110,57 @@ async def test_cmd_news_topic_triggers_search(fresh_db):
 
     text = msg.answer.await_args.args[0]
     assert "Tesla" in text or "Ищу новости" in text
+
+
+def test_is_safe_monitor_url_accepts_public_and_blocks_internal():
+    assert cron_module._is_safe_monitor_url("http://example.com")[0] is True
+    assert cron_module._is_safe_monitor_url("https://example.com/path")[0] is True
+
+    blocked = (
+        "http://localhost",
+        "http://127.0.0.1/health",
+        "http://[::1]/",
+        "http://192.168.1.1",
+        "http://10.0.0.1",
+        "http://169.254.169.254/latest/meta-data/",
+        "ftp://example.com",
+        "http://",
+    )
+    for url in blocked:
+        ok, reason = cron_module._is_safe_monitor_url(url)
+        assert ok is False, f"expected {url} to be blocked, got ok=True"
+        assert reason, f"expected blocking reason for {url}"
+
+
+@pytest.mark.asyncio
+async def test_process_monitor_add_rejects_localhost(fresh_db):
+    msg = _message(text="/monitor_add Test http://localhost")
+    await cron_module._process_monitor_add(msg, "Test", "http://localhost", 300)
+
+    assert fresh_db.get_monitors(42) == []
+    msg.answer.assert_awaited()
+    text = msg.answer.await_args.args[0]
+    assert "URL не разрешён" in text
+
+
+@pytest.mark.asyncio
+async def test_process_monitor_add_accepts_public_url(fresh_db):
+    msg = _message(text="/monitor_add Test http://example.com")
+
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_response.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.get = MagicMock(return_value=mock_response)
+
+    with patch.object(cron_module.aiohttp, "ClientSession", return_value=mock_session):
+        await cron_module._process_monitor_add(msg, "Test", "http://example.com", 300)
+
+    monitors = fresh_db.get_monitors(42)
+    assert len(monitors) == 1
+    assert monitors[0]["url"] == "http://example.com"
+    msg.answer.assert_awaited()
