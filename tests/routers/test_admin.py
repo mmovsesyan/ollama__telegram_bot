@@ -86,7 +86,9 @@ async def test_admin_requests_only_for_admins(fresh_db):
 
     msg2 = _message(user_id=2, text="/admin_requests")
     await cron_module.cmd_admin_requests(msg2, state)
-    assert not msg2.answer.called
+    text2 = msg2.answer.await_args.args[0]
+    assert "доступ" in text2.lower()
+    assert fresh_db.is_user_allowed(2) is False
 
 
 @pytest.mark.asyncio
@@ -101,7 +103,42 @@ async def test_admin_approve(fresh_db):
     await cron_module.cmd_admin_approve(msg, state)
     text = msg.answer.await_args.args[0]
     assert "approved" in text.lower() or "одобрен" in text.lower()
+    assert "`2`" in text
     assert fresh_db.is_user_allowed(2) is True
+    # Target user should be notified.
+    msg.bot.send_message.assert_awaited_once()
+    call_kwargs = msg.bot.send_message.await_args.kwargs
+    target_msg = call_kwargs.get("text", "")
+    assert "одобрен" in target_msg.lower() or "approved" in target_msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_non_admin_gets_feedback(fresh_db):
+    fresh_db.ensure_user(1, status="approved")
+    fresh_db.set_user_admin(1, False)
+    fresh_db.ensure_user(2, status="pending")
+
+    msg = _message(user_id=1, text="/admin_approve 2")
+    state = MagicMock()
+    state.clear = AsyncMock()
+    await cron_module.cmd_admin_approve(msg, state)
+    text = msg.answer.await_args.args[0]
+    assert "администратор" in text.lower() or "admin" in text.lower()
+    assert fresh_db.is_user_allowed(2) is False
+
+
+@pytest.mark.asyncio
+async def test_unallowed_user_gets_feedback(fresh_db):
+    fresh_db.ensure_user(1, status="pending")
+    fresh_db.ensure_user(2, status="pending")
+
+    msg = _message(user_id=1, text="/admin_approve 2")
+    state = MagicMock()
+    state.clear = AsyncMock()
+    await cron_module.cmd_admin_approve(msg, state)
+    text = msg.answer.await_args.args[0]
+    assert "доступ" in text.lower()
+    assert fresh_db.is_user_allowed(2) is False
 
 
 @pytest.mark.asyncio
@@ -128,7 +165,8 @@ async def test_admin_remove_requires_admin(fresh_db):
     state = MagicMock()
     state.clear = AsyncMock()
     await cron_module.cmd_admin_remove(msg, state)
-    assert not msg.answer.called
+    text = msg.answer.await_args.args[0]
+    assert "доступ" in text.lower() or "admin" in text.lower()
     assert fresh_db.is_user_allowed(2) is True
 
 
@@ -159,7 +197,8 @@ async def test_non_admin_cannot_promote(fresh_db):
     state = MagicMock()
     state.clear = AsyncMock()
     await cron_module.cmd_admin_promote(msg, state)
-    assert not msg.answer.called
+    text = msg.answer.await_args.args[0]
+    assert "администратор" in text.lower() or "admin" in text.lower()
     assert is_admin(2) is False
 
 

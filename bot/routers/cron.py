@@ -3050,13 +3050,28 @@ _BUTTON_HANDLERS["📒 Список"] = cmd_reminders
 # --- Admin user management ---
 
 
-def _admin_required(message: Message) -> bool:
+async def _admin_required(message: Message) -> bool:
+    """Check that the caller is an approved admin and give clear feedback if not."""
     if message.from_user is None:
         return False
-    if not _is_allowed(message.from_user.id):
+    user_id = message.from_user.id
+
+    if not _is_allowed(user_id):
+        await message.answer(
+            "⛔ У тебя нет доступа к боту. Обратись к администратору.",
+            reply_markup=command_keyboard,
+        )
+        logger.warning("[ADMIN] non-allowed user %s tried admin command", user_id)
         return False
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(user_id):
+        await message.answer(
+            "🛡 Эта команда только для администраторов.",
+            reply_markup=command_keyboard,
+        )
+        logger.warning("[ADMIN] non-admin user %s tried admin command", user_id)
         return False
+
     return True
 
 
@@ -3075,7 +3090,7 @@ def _format_user_row(idx: int, user: dict) -> str:
 @router.message(lambda m: m.text and m.text.startswith("/admin_requests"))
 async def cmd_admin_requests(message: Message, state: FSMContext):
     await state.clear()
-    if not _admin_required(message):
+    if not await _admin_required(message):
         return
 
     pending = db.get_users_by_status("pending") if db else []
@@ -3100,7 +3115,7 @@ async def cmd_admin_requests(message: Message, state: FSMContext):
 @router.message(lambda m: m.text and m.text.startswith("/admin_list"))
 async def cmd_admin_list(message: Message, state: FSMContext):
     await state.clear()
-    if not _admin_required(message):
+    if not await _admin_required(message):
         return
 
     users = db.get_all_users() if db else []
@@ -3186,7 +3201,7 @@ async def cb_admin_action(callback: CallbackQuery, state: FSMContext):
 
 async def _admin_set_status(message: Message, state: FSMContext, status: str):
     await state.clear()
-    if not _admin_required(message):
+    if not await _admin_required(message):
         return
 
     parts = message.text.split(maxsplit=1)
@@ -3217,6 +3232,8 @@ async def _admin_set_status(message: Message, state: FSMContext, status: str):
         )
         return
 
+    previous_status = target.get("status")
+
     ok = (
         db.set_user_status(target_id, status, approved_by=message.from_user.id)
         if db
@@ -3228,12 +3245,18 @@ async def _admin_set_status(message: Message, state: FSMContext, status: str):
         )
         return
 
+    display = target.get("full_name") or target.get("username") or f"ID {target_id}"
     await message.answer(
         f"{'✅' if status == 'approved' else '❌' if status == 'rejected' else '🚫'} "
-        f"Пользователь `{target_id}` — {status}.",
+        f"Пользователь {display} (`{target_id}`) — {status}.",
         reply_markup=command_keyboard,
         parse_mode="Markdown",
     )
+
+    # Notify target user, but only when the status actually changed. If the
+    # user was already approved, sending the welcome message again is confusing.
+    if previous_status == status:
+        return
 
     try:
         await message.bot.send_message(
@@ -3268,7 +3291,7 @@ async def cmd_admin_block(message: Message, state: FSMContext):
 @router.message(lambda m: m.text and m.text.startswith("/admin_remove"))
 async def cmd_admin_remove(message: Message, state: FSMContext):
     await state.clear()
-    if not _admin_required(message):
+    if not await _admin_required(message):
         return
 
     parts = message.text.split(maxsplit=1)
@@ -3325,7 +3348,7 @@ async def cmd_admin_remove(message: Message, state: FSMContext):
 
 async def _admin_set_admin(message: Message, state: FSMContext, is_admin_flag: bool):
     await state.clear()
-    if not _admin_required(message):
+    if not await _admin_required(message):
         return
 
     parts = message.text.split(maxsplit=1)
