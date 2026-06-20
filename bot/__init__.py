@@ -71,6 +71,7 @@ async def main() -> None:
     start.db = db
     settings.db = db
     from bot.intent.context import ContextBuilder
+
     ContextBuilder.db = db
     from bot.services import reminders as reminders_service
     from bot.services import kb as kb_service
@@ -83,6 +84,7 @@ async def main() -> None:
     from bot.services import images as images_service
     from bot.services import digest as digest_service
     from bot.services import retention as retention_service
+
     reminders_service.db = db
     kb_service.db = db
     rss_news_service.db = db
@@ -98,6 +100,7 @@ async def main() -> None:
 
     # Inject DB into the security module so authorization checks hit the DB.
     from bot import security as security_module
+
     security_module.db = db
 
     # Set Telegram menu commands. Admins see extra commands.
@@ -105,7 +108,9 @@ async def main() -> None:
         commands = list(BASE_COMMANDS)
         if db.get_admin_user_ids():
             commands.extend(ADMIN_COMMANDS)
-        await aiogram_bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+        await aiogram_bot.set_my_commands(
+            commands, scope=BotCommandScopeAllPrivateChats()
+        )
         print("[BOT] Menu commands registered")
     except Exception as e:
         print(f"[BOT] Failed to set commands: {e}")
@@ -114,13 +119,21 @@ async def main() -> None:
     # before the smart free-form text handler. completion.router goes BEFORE
     # smart so its button matchers (F.text == "❓ Помощь" etc.) win — smart
     # is the catch-all for everything else.
-    dp.include_routers(start.router, settings.router, cron.router, completion.router, voice_handler.router, smart_handler.router)
+    dp.include_routers(
+        start.router,
+        settings.router,
+        cron.router,
+        completion.router,
+        voice_handler.router,
+        smart_handler.router,
+    )
 
     # Setup scheduler
     scheduler = AsyncIOScheduler()
 
     def _next_trigger(trigger_at: str, recurring: str | None) -> str | None:
         from datetime import timedelta
+
         try:
             dt = datetime.fromisoformat(trigger_at)
         except Exception:
@@ -143,8 +156,24 @@ async def main() -> None:
             return (dt + timedelta(weeks=1)).isoformat()
         if recurring == "monthly":
             return (dt + timedelta(days=30)).isoformat()
-        if recurring in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"):
-            weekday_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+        if recurring in (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ):
+            weekday_map = {
+                "monday": 0,
+                "tuesday": 1,
+                "wednesday": 2,
+                "thursday": 3,
+                "friday": 4,
+                "saturday": 5,
+                "sunday": 6,
+            }
             target = weekday_map[recurring]
             nxt = dt + timedelta(days=1)
             while nxt.weekday() != target:
@@ -162,14 +191,14 @@ async def main() -> None:
         sent_count = 0
         for r in reminders:
             try:
-                action = r.get('action', 'notify')
-                user_id = r['user_id']
-                content = r['content']
+                action = r.get("action", "notify")
+                user_id = r["user_id"]
+                content = r["content"]
 
                 if sent_count > 0:
                     await asyncio.sleep(SEND_DELAY)
 
-                if action == 'execute':
+                if action == "execute":
                     # Try smart execution (real APIs) first
                     smart_result = await execute_smart(content)
                     if smart_result is not None:
@@ -180,11 +209,16 @@ async def main() -> None:
                     else:
                         # Fallback to generic LLM
                         messages = [
-                            OllamaChatMessage(role="system", content="Ты ассистент. Выполни запрос пользователя кратко, полезно и по делу."),
+                            OllamaChatMessage(
+                                role="system",
+                                content="Ты ассистент. Выполни запрос пользователя кратко, полезно и по делу.",
+                            ),
                             OllamaChatMessage(role="user", content=content),
                         ]
                         response = ""
-                        async for is_done, chunk in generate_chat_completion(messages, model=OLLAMA_MODEL):
+                        async for is_done, chunk in generate_chat_completion(
+                            messages, model=OLLAMA_MODEL
+                        ):
                             if is_done:
                                 break
                             if isinstance(chunk, OllamaErrorChunk):
@@ -199,16 +233,15 @@ async def main() -> None:
                         )
                 else:
                     await aiogram_bot.send_message(
-                        chat_id=user_id,
-                        text=f"⏰ Напоминание:\n{content}"
+                        chat_id=user_id, text=f"⏰ Напоминание:\n{content}"
                     )
 
-                recurring = r.get('recurring')
-                nxt = _next_trigger(r['trigger_at'], recurring)
+                recurring = r.get("recurring")
+                nxt = _next_trigger(r["trigger_at"], recurring)
                 if nxt and recurring:
-                    db.reschedule_reminder(r['id'], nxt)
+                    db.reschedule_reminder(r["id"], nxt)
                 else:
-                    db.disable_reminder(r['id'])
+                    db.disable_reminder(r["id"])
                 sent_count += 1
             except Exception as e:
                 print(f"[CRON] Failed to send reminder {r['id']}: {e}")
@@ -219,23 +252,33 @@ async def main() -> None:
 
         async with aiohttp.ClientSession() as session:
             for m in monitors:
-                interval = m.get('check_interval', 300)
-                last_check_str = m.get('last_check')
+                interval = max(60, int(m.get("check_interval", 300)))
+                last_check_str = m.get("last_check")
                 if last_check_str:
                     try:
-                        last_check = datetime.fromisoformat(str(last_check_str).replace(' ', 'T'))
+                        last_check = datetime.fromisoformat(
+                            str(last_check_str).replace(" ", "T")
+                        )
                         if (now - last_check).total_seconds() < interval:
                             continue
                     except Exception:
                         pass
-                expected = m.get('expected_status', 200)
-                mid = m['id']
-                was_alerted = bool(m.get('alerted'))
+
+                mid = m["id"]
+                url = m.get("url", "")
+                safe, _ = await cron._is_safe_monitor_url_async(url)
+                if not safe:
+                    db.update_monitor_status(mid, 0)
+                    continue
+
+                expected = m.get("expected_status", 200)
+                was_alerted = bool(m.get("alerted"))
+                method = m.get("method", "GET")
+                if method.upper() not in ("GET", "HEAD"):
+                    method = "GET"
                 try:
                     async with session.request(
-                        method=m.get('method', 'GET'),
-                        url=m['url'],
-                        timeout=aiohttp.ClientTimeout(total=30)
+                        method=method, url=url, timeout=aiohttp.ClientTimeout(total=30)
                     ) as response:
                         status = response.status
                         db.update_monitor_status(mid, status)
@@ -244,10 +287,10 @@ async def main() -> None:
                                 db.set_monitor_alerted(mid, True)
                                 try:
                                     await aiogram_bot.send_message(
-                                        chat_id=m['user_id'],
+                                        chat_id=m["user_id"],
                                         text=f"🚨 ALERT #{mid}: {m['name']}\n"
-                                             f"URL: {m['url']}\n"
-                                             f"Expected HTTP {expected}, got HTTP {status}"
+                                        f"URL: {m['url']}\n"
+                                        f"Expected HTTP {expected}, got HTTP {status}",
                                     )
                                 except Exception as send_err:
                                     print(f"[CRON] Failed alert: {send_err}")
@@ -256,10 +299,10 @@ async def main() -> None:
                                 db.set_monitor_alerted(mid, False)
                                 try:
                                     await aiogram_bot.send_message(
-                                        chat_id=m['user_id'],
+                                        chat_id=m["user_id"],
                                         text=f"✅ RECOVERY #{mid}: {m['name']}\n"
-                                             f"URL: {m['url']}\n"
-                                             f"HTTP {status} — сайт снова доступен"
+                                        f"URL: {m['url']}\n"
+                                        f"HTTP {status} — сайт снова доступен",
                                     )
                                 except Exception as send_err:
                                     print(f"[CRON] Failed recovery: {send_err}")
@@ -269,16 +312,17 @@ async def main() -> None:
                         db.set_monitor_alerted(mid, True)
                         try:
                             await aiogram_bot.send_message(
-                                chat_id=m['user_id'],
+                                chat_id=m["user_id"],
                                 text=f"🚨 ALERT #{mid}: {m['name']}\n"
-                                     f"URL: {m['url']}\n"
-                                     f"Error: {str(e)[:200]}"
+                                f"URL: {m['url']}\n"
+                                f"Error: {str(e)[:200]}",
                             )
                         except Exception as send_err:
                             print(f"[CRON] Failed alert: {send_err}")
 
     async def cleanup_sessions():
         from bot.routers import completion
+
         await completion._cleanup_old_chats()
 
     async def check_briefings():
@@ -286,6 +330,7 @@ async def main() -> None:
             return
         from bot.services import briefing as briefing_service
         from bot.services.profile import now_in_tz
+
         users = db.get_briefing_enabled_users()
         for prefs in users:
             tz_name = prefs.get("timezone") or "UTC"
@@ -304,6 +349,7 @@ async def main() -> None:
             return
         from bot.services import digest as digest_service
         from bot.services.profile import now_in_tz
+
         users = db.get_digest_enabled_users()
         for prefs in users:
             tz_name = prefs.get("timezone") or "UTC"
@@ -321,14 +367,42 @@ async def main() -> None:
         if db is None:
             return
         from bot.services import retention as retention_service
+
         retention_service.cleanup_all_retention()
 
-    scheduler.add_job(check_reminders, IntervalTrigger(seconds=30), id="reminders", replace_existing=True)
-    scheduler.add_job(check_monitors, IntervalTrigger(seconds=60), id="monitors", replace_existing=True)
-    scheduler.add_job(cleanup_sessions, IntervalTrigger(minutes=30), id="cleanup", replace_existing=True)
-    scheduler.add_job(check_briefings, IntervalTrigger(minutes=1), id="briefing", replace_existing=True)
-    scheduler.add_job(check_digests, IntervalTrigger(minutes=1), id="digest", replace_existing=True)
-    scheduler.add_job(check_retention, IntervalTrigger(hours=24), id="retention", replace_existing=True)
+    scheduler.add_job(
+        check_reminders,
+        IntervalTrigger(seconds=30),
+        id="reminders",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        check_monitors,
+        IntervalTrigger(seconds=60),
+        id="monitors",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        cleanup_sessions,
+        IntervalTrigger(minutes=30),
+        id="cleanup",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        check_briefings,
+        IntervalTrigger(minutes=1),
+        id="briefing",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        check_digests, IntervalTrigger(minutes=1), id="digest", replace_existing=True
+    )
+    scheduler.add_job(
+        check_retention,
+        IntervalTrigger(hours=24),
+        id="retention",
+        replace_existing=True,
+    )
     scheduler.start()
 
     print(f"[OLLAMA] Selected base model -> {OLLAMA_MODEL}")

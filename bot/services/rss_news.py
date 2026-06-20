@@ -119,12 +119,18 @@ def _matches_topic(text: str, topic: str | None) -> bool:
     if not topic:
         return True
     topic = topic.lower().strip()
-    # Multi-word topics are matched as a phrase; single-word as a substring.
+    if not topic:
+        return True
+    # Multi-word topics are matched as a phrase or by whole words; single-word
+    # topics require a whole-word match. This prevents short Russian substrings
+    # like "ии" from matching inside unrelated words ("отношении", "российских").
     words = topic.split()
     text_lower = text.lower()
     if len(words) == 1:
-        return topic in text_lower
-    return topic in text_lower
+        return bool(re.search(rf"\b{re.escape(topic)}\b", text_lower))
+    if topic in text_lower:
+        return True
+    return all(bool(re.search(rf"\b{re.escape(word)}\b", text_lower)) for word in words)
 
 
 def _looks_russian(text: str) -> bool:
@@ -147,9 +153,13 @@ def _looks_like_english_query(text: str | None) -> bool:
     return latin > 0 and cyrillic == 0
 
 
-async def _fetch_feed(session: aiohttp.ClientSession, url: str, timeout: int = 15) -> str | None:
+async def _fetch_feed(
+    session: aiohttp.ClientSession, url: str, timeout: int = 15
+) -> str | None:
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+        async with session.get(
+            url, timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as resp:
             if resp.status == 200:
                 return await resp.text()
             logger.warning("[RSS] %s returned HTTP %s", url, resp.status)
@@ -220,7 +230,11 @@ async def _parse_feeds(
                 continue
 
             combined = f"{title} {summary}"
-            if require_russian and NEWS_LANGUAGE == "ru" and not _looks_russian(combined):
+            if (
+                require_russian
+                and NEWS_LANGUAGE == "ru"
+                and not _looks_russian(combined)
+            ):
                 continue
             if not _matches_topic(combined, topic):
                 continue
@@ -229,7 +243,10 @@ async def _parse_feeds(
             items.append(NewsItem(title, link, summary, published, source))
 
     # Sort by recency, newest first, and cap early so downstream filters work on a bounded set.
-    items.sort(key=lambda x: x.published or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    items.sort(
+        key=lambda x: x.published or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
     return items[:limit]
 
 
@@ -410,16 +427,22 @@ async def _web_fallback(
     timelimit = "w" if not require_russian else "d"
 
     if provider == "duckduckgo":
-        results = await _search_duckduckgo_news(query, max_results=limit, timelimit=timelimit, region=region)
+        results = await _search_duckduckgo_news(
+            query, max_results=limit, timelimit=timelimit, region=region
+        )
         if not results:
-            results = await _search_duckduckgo(query, max_results=limit, timelimit=timelimit, region=region)
+            results = await _search_duckduckgo(
+                query, max_results=limit, timelimit=timelimit, region=region
+            )
     elif provider == "searxng":
         results = await _search_searxng(query, max_results=limit)
     elif provider == "ollama":
         results = await _search_ollama(query, max_results=limit)
     else:
         # Unknown provider: try DuckDuckGo as safe default.
-        results = await _search_duckduckgo_news(query, max_results=limit, timelimit=timelimit, region=region)
+        results = await _search_duckduckgo_news(
+            query, max_results=limit, timelimit=timelimit, region=region
+        )
 
     items: list[NewsItem] = []
     seen: set[str] = set()
@@ -430,7 +453,11 @@ async def _web_fallback(
         seen.add(url)
         title = _clean_text(r.get("title", "Без названия"))
         summary = _clean_text(r.get("body") or r.get("content", ""), max_len=400)
-        if require_russian and NEWS_LANGUAGE == "ru" and not _looks_russian(f"{title} {summary}"):
+        if (
+            require_russian
+            and NEWS_LANGUAGE == "ru"
+            and not _looks_russian(f"{title} {summary}")
+        ):
             continue
         source = r.get("source") or _extract_source_from_url(url)
         published = None
@@ -469,8 +496,14 @@ async def get_fresh_news(
 
     if not items:
         query = topic.strip() if topic else "последние новости"
-        items = await _web_fallback(user_id, query, limit=limit, require_russian=require_russian)
-        source = WEB_SEARCH_PROVIDER if WEB_SEARCH_PROVIDER in ("duckduckgo", "searxng", "ollama") else "duckduckgo"
+        items = await _web_fallback(
+            user_id, query, limit=limit, require_russian=require_russian
+        )
+        source = (
+            WEB_SEARCH_PROVIDER
+            if WEB_SEARCH_PROVIDER in ("duckduckgo", "searxng", "ollama")
+            else "duckduckgo"
+        )
 
     if items:
         _mark_shown(user_id, items)

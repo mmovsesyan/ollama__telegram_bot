@@ -1,6 +1,4 @@
-import os
 import sys
-import tempfile
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -166,7 +164,7 @@ async def test_save_description_to_memory_wrong_user(tmp_path):
     image_id = real_db.add_image(
         user_id=1,
         telegram_file_id="p",
-        local_path="/tmp/x.jpg",
+        local_path=str(tmp_path / "x.jpg"),
         caption=None,
         description="x",
         ocr_text=None,
@@ -190,12 +188,12 @@ def test_delete_image_removes_file(tmp_path):
         description="x",
         ocr_text=None,
     )
-    assert images_module.delete_image(image_id)
+    assert images_module.delete_image(image_id, user_id=1)
     assert not path.exists()
 
 
-def test_delete_image_unknown_returns_false():
-    images_module.db = Database(str(tempfile.mktemp(suffix=".db")))
+def test_delete_image_unknown_returns_false(tmp_path):
+    images_module.db = Database(str(tmp_path / "test.db"))
     assert not images_module.delete_image(999)
 
 

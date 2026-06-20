@@ -191,7 +191,8 @@ class TestCascadeDeletion:
         with sqlite3.connect(fresh_db.db_path) as conn:
             for table in user_tables:
                 count = conn.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (target,)
+                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?",  # Test-only introspection of known table names.  # nosec B608
+                    (target,),
                 ).fetchone()[0]
                 assert count == 0, f"{table} still has rows for target user"
 
@@ -206,7 +207,8 @@ class TestCascadeDeletion:
             # Other user's data must remain
             for table in user_tables:
                 count = conn.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (other,)
+                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?",  # Test-only introspection of known table names.  # nosec B608
+                    (other,),
                 ).fetchone()[0]
                 assert count > 0, f"{table} lost rows for other user"
 
@@ -262,3 +264,50 @@ class TestCascadeDeletion:
 
     def test_delete_user_returns_false_when_user_missing(self, fresh_db):
         assert fresh_db.delete_user(9999) is False
+
+    def test_delete_user_ignores_path_traversal_local_path(self, tmp_path, monkeypatch):
+        """A malicious local_path outside data/<user_id> must not be deleted.
+
+        We create a fresh Database whose data directory already contains the
+        user's docs tree, so the guard sees the expected path exists and rejects
+        the traversal path.
+        """
+
+        target = 41
+
+        # Prepare user data dir *before* the Database object is created.
+        user_dir = tmp_path / "data" / str(target) / "docs"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        legit = user_dir / "legit.txt"
+        legit.write_text("delete me", encoding="utf-8")
+
+        # File the attacker wants to delete (outside their data dir).
+        victim = tmp_path / "victim.txt"
+        victim.write_text("keep me", encoding="utf-8")
+
+        db_path = tmp_path / "data" / "users.db"
+        fresh_db = Database(str(db_path))
+        fresh_db.ensure_user(target, status="approved")
+
+        fresh_db.add_document(
+            target,
+            "f1",
+            str(victim),
+            "../victim.txt",
+            "text/plain",
+            "bad",
+            None,
+        )
+        fresh_db.add_document(
+            target,
+            "f2",
+            str(legit),
+            "legit.txt",
+            "text/plain",
+            "good",
+            None,
+        )
+
+        assert fresh_db.delete_user(target) is True
+        assert victim.exists(), "path outside user dir was incorrectly deleted"
+        assert not legit.exists(), "legit file inside user dir was not deleted"
