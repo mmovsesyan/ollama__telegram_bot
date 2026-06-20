@@ -238,6 +238,8 @@ async def save_description_to_memory(user_id: int, image_id: int) -> str:
         from bot.routers import completion
 
         completion.refresh_system_prompt(user_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "Failed to refresh system prompt after image save for %s: %s", user_id, exc
+        )
     return "✅ Сохранил описание фото в память."

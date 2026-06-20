@@ -23,6 +23,8 @@ def _callback(user_id: int = 42, data: str = ""):
     cb.data = data
     cb.message = MagicMock()
     cb.message.answer = AsyncMock()
+    cb.message.edit_text = AsyncMock()
+    cb.message.edit_reply_markup = AsyncMock()
     cb.answer = AsyncMock()
     return cb
 
@@ -140,7 +142,9 @@ async def test_process_briefing_city(fresh_db):
 
 
 def test_db_get_briefing_enabled_users(fresh_db):
-    fresh_db.set_user_prefs(1, briefing_enabled=1, proactive_enabled=1, timezone="Europe/Moscow")
+    fresh_db.set_user_prefs(
+        1, briefing_enabled=1, proactive_enabled=1, timezone="Europe/Moscow"
+    )
     fresh_db.set_user_prefs(2, briefing_enabled=0, proactive_enabled=1, timezone="UTC")
     fresh_db.set_user_prefs(3, briefing_enabled=1, proactive_enabled=0, timezone="UTC")
     users = fresh_db.get_briefing_enabled_users()

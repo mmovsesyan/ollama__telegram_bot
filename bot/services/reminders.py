@@ -1,8 +1,11 @@
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 
 from bot.keyboards.reply import command_keyboard
 from bot.services.profile import format_local, get_zoneinfo
+
+logger = logging.getLogger(__name__)
 
 db = None  # injected from bot.__init__
 
@@ -13,7 +16,8 @@ def _user_tz_name(user_id: int) -> str | None:
         return None
     try:
         prefs = db.get_user_prefs(user_id)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load timezone for %s: %s", user_id, exc)
         return None
     return (prefs or {}).get("timezone") or None
 
@@ -36,44 +40,44 @@ def _time_from_period_word(word: str | None) -> tuple[int, int]:
 
 def _extract_time_of_day(text: str) -> tuple[int, int] | None:
     """Look for explicit HH:MM, bare hour after 'в', or fuzzy words like утром/днём/вечером/ночью."""
-    m = re.search(r'(\d{1,2}):(\d{2})', text)
+    m = re.search(r"(\d{1,2}):(\d{2})", text)
     if m:
         h = max(0, min(23, int(m.group(1))))
         minute = max(0, min(59, int(m.group(2))))
         return h, minute
-    m = re.search(r'\bв\s+(\d{1,2})(?::(\d{2}))?\b', text)
+    m = re.search(r"\bв\s+(\d{1,2})(?::(\d{2}))?\b", text)
     if m:
         h = max(0, min(23, int(m.group(1))))
         minute = max(0, min(59, int(m.group(2) or 0)))
         return h, minute
-    if re.search(r'\b7\s*утра\b|\b07\s*утра\b', text):
+    if re.search(r"\b7\s*утра\b|\b07\s*утра\b", text):
         return 7, 0
-    if re.search(r'\b9\s*утра\b|\b09\s*утра\b', text):
+    if re.search(r"\b9\s*утра\b|\b09\s*утра\b", text):
         return 9, 0
-    if re.search(r'\b12\s*дня\b|\b12\s*дн[яе]\b', text):
+    if re.search(r"\b12\s*дня\b|\b12\s*дн[яе]\b", text):
         return 12, 0
-    if re.search(r'\b15\s*дня\b|\b15\s*дн[яе]\b', text):
+    if re.search(r"\b15\s*дня\b|\b15\s*дн[яе]\b", text):
         return 15, 0
-    if re.search(r'\bутр(ом|а)\b', text):
+    if re.search(r"\bутр(ом|а)\b", text):
         return 8, 0
-    if re.search(r'\bдн(ём|ем|я)\b', text):
+    if re.search(r"\bдн(ём|ем|я)\b", text):
         return 13, 0
-    if re.search(r'\bвечер(ом|а)\b', text):
+    if re.search(r"\bвечер(ом|а)\b", text):
         return 19, 0
-    if re.search(r'\bноч(ью|и)\b', text):
+    if re.search(r"\bноч(ью|и)\b", text):
         return 23, 0
     return None
 
 
 # Shared regex fragments for fuzzy Russian time strings.
-_TIME_MODIFIERS = r'(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)'
-_TIME_RE = r'\d{1,2}(?::\d{2})?(?:\s+' + _TIME_MODIFIERS + r')?'
+_TIME_MODIFIERS = r"(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)"
+_TIME_RE = r"\d{1,2}(?::\d{2})?(?:\s+" + _TIME_MODIFIERS + r")?"
 
-_MINUTE_UNITS = r'(?:минут(?:ы|у)?|мин)'
-_HOUR_UNITS = r'(?:час(?:ов|а)?|ч)'
-_DAY_UNITS = r'(?:дн(?:ей|я|ь)|д)'
-_WEEK_UNITS = r'(?:недел(?:ь|и|ю))'
-_MONTH_UNITS = r'(?:месяц(?:ев|а)?)'
+_MINUTE_UNITS = r"(?:минут(?:ы|у)?|мин)"
+_HOUR_UNITS = r"(?:час(?:ов|а)?|ч)"
+_DAY_UNITS = r"(?:дн(?:ей|я|ь)|д)"
+_WEEK_UNITS = r"(?:недел(?:ь|и|ю))"
+_MONTH_UNITS = r"(?:месяц(?:ев|а)?)"
 
 
 def _extract_time_string(text: str) -> str | None:
@@ -89,78 +93,99 @@ def _extract_time_string(text: str) -> str | None:
 
     # 1. Recurring: daily / every morning/evening/night / по календарю
     p = _match(
-        r'(?:ежедневно|каждый\s+день|every\s+day|daily|по\s+календарю|'
-        r'каждое\s+утро|каждое\s+утра|каждый\s+вечер|каждый\s+вечера|'
-        r'каждую\s+ночь|каждую\s+ночи|каждое\s+дн[яе])'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:ежедневно|каждый\s+день|every\s+day|daily|по\s+календарю|"
+        r"каждое\s+утро|каждое\s+утра|каждый\s+вечер|каждый\s+вечера|"
+        r"каждую\s+ночь|каждую\s+ночи|каждое\s+дн[яе])"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 2. Weekday
     p = _match(
-        r'(?:каждый\s+будний\s+день|каждый\s+будний|будни(?:е)?|'
-        r'рабочие\s+дни|каждый\s+рабочий\s+день?|weekday|по\s+будням)'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:каждый\s+будний\s+день|каждый\s+будний|будни(?:е)?|"
+        r"рабочие\s+дни|каждый\s+рабочий\s+день?|weekday|по\s+будням)"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 3. Weekend
     p = _match(
-        r'(?:каждый\s+выходной|выходные|weekend|по\s+выходным)'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:каждый\s+выходной|выходные|weekend|по\s+выходным)"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 4. Weekly (optionally with a day-of-week and time)
     p = _match(
-        r'(?:еженедельно|every\s+week|weekly|каждую\s+неделю)'
-        r'(?:\s+в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье))?'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:еженедельно|every\s+week|weekly|каждую\s+неделю)"
+        r"(?:\s+в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье))?"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 5. Monthly
     p = _match(
-        r'(?:ежемесячно|every\s+month|monthly|каждый\s+месяц)'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:ежемесячно|every\s+month|monthly|каждый\s+месяц)"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 6. Day-of-week absolute
     p = _match(
-        r'(?:(?:в\s+)?(?:понедельник|вторник|среду|четверг|пятницу|субботу|'
-        r'воскресенье|monday|tuesday|wednesday|thursday|friday|saturday|sunday))'
-        r'(?:\s+в\s+' + _TIME_RE + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:(?:в\s+)?(?:понедельник|вторник|среду|четверг|пятницу|субботу|"
+        r"воскресенье|monday|tuesday|wednesday|thursday|friday|saturday|sunday))"
+        r"(?:\s+в\s+" + _TIME_RE + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 7. Every N minutes/hours/days/weeks/months
     p = _match(
-        r'(?:каждые|раз\s+в)\s+\d+\s*(?:' + _MINUTE_UNITS + '|' + _HOUR_UNITS + '|' +
-        _DAY_UNITS + '|' + _WEEK_UNITS + '|' + _MONTH_UNITS + r')?'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"(?:каждые|раз\s+в)\s+\d+\s*(?:"
+        + _MINUTE_UNITS
+        + "|"
+        + _HOUR_UNITS
+        + "|"
+        + _DAY_UNITS
+        + "|"
+        + _WEEK_UNITS
+        + "|"
+        + _MONTH_UNITS
+        + r")?"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
 
     # 8. Relative offsets: через N ... / через неделю / через месяц
     p = _match(
-        r'через\s+(?:(?:\d+)\s*(?:' + _MINUTE_UNITS + '|' + _HOUR_UNITS + '|' +
-        _DAY_UNITS + '|' + _WEEK_UNITS + '|' + _MONTH_UNITS + r')|' +
-        _WEEK_UNITS + '|' + _MONTH_UNITS + r')'
-        r'(?:\s+' + _TIME_RE + r')?'
+        r"через\s+(?:(?:\d+)\s*(?:"
+        + _MINUTE_UNITS
+        + "|"
+        + _HOUR_UNITS
+        + "|"
+        + _DAY_UNITS
+        + "|"
+        + _WEEK_UNITS
+        + "|"
+        + _MONTH_UNITS
+        + r")|"
+        + _WEEK_UNITS
+        + "|"
+        + _MONTH_UNITS
+        + r")"
+        r"(?:\s+" + _TIME_RE + r")?"
     )
     if p:
         return p
@@ -168,21 +193,21 @@ def _extract_time_string(text: str) -> str | None:
     # 9. Today / tomorrow: "завтра в 9:00", "завтра 9:00", "завтра днем",
     #    "9:00 утра завтра", bare "завтра"
     p = _match(
-        rf'(?:сегодня|завтра)\s+в\s+{_TIME_RE}?'
-        rf'|(?:сегодня|завтра)\s+{_TIME_RE}'
-        rf'|(?:сегодня|завтра)\s+(?:{_TIME_MODIFIERS})'
-        rf'|(?:{_TIME_RE}\s+)?(?:сегодня|завтра)'
+        rf"(?:сегодня|завтра)\s+в\s+{_TIME_RE}?"
+        rf"|(?:сегодня|завтра)\s+{_TIME_RE}"
+        rf"|(?:сегодня|завтра)\s+(?:{_TIME_MODIFIERS})"
+        rf"|(?:{_TIME_RE}\s+)?(?:сегодня|завтра)"
     )
     if p:
         return p
 
     # 10. Bare ISO datetime
-    p = _match(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}')
+    p = _match(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}")
     if p:
         return p
 
     # 11. Bare time
-    p = _match(r'(?:в\s+)?' + _TIME_RE)
+    p = _match(r"(?:в\s+)?" + _TIME_RE)
     if p:
         return p
 
@@ -199,7 +224,9 @@ def parse_time(text: str) -> datetime:
 _PARSE_FALLBACK_DELTA = timedelta(minutes=5)
 
 
-def parse_reminder_strict(text: str, tz_name: str | None = None) -> tuple[datetime, str | None, bool]:
+def parse_reminder_strict(
+    text: str, tz_name: str | None = None
+) -> tuple[datetime, str | None, bool]:
     """Like parse_reminder, but the third element is True when the input
     contained recognizable time tokens, False when the default fallback
     (now + 5 minutes) was used.
@@ -223,7 +250,9 @@ def parse_reminder_strict(text: str, tz_name: str | None = None) -> tuple[dateti
     return dt, recurrence, parsed
 
 
-def parse_reminder(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
+def parse_reminder(
+    text: str, tz_name: str | None = None
+) -> tuple[datetime, str | None]:
     """Parse reminder time. Returns (datetime, recurrence_pattern).
     recurrence_pattern: daily, weekday, weekend, weekly, monthly,
                         monday..sunday, or None.
@@ -236,7 +265,9 @@ def parse_reminder(text: str, tz_name: str | None = None) -> tuple[datetime, str
     return _parse_reminder_core(text, tz_name=tz_name)
 
 
-def _parse_reminder_core(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
+def _parse_reminder_core(
+    text: str, tz_name: str | None = None
+) -> tuple[datetime, str | None]:
     """Public-facing core. Computes the parse in the user's tz, then
     converts the resulting datetime to UTC so storage is timezone-naive
     UTC ISO strings throughout the codebase.
@@ -251,7 +282,9 @@ def _parse_reminder_core(text: str, tz_name: str | None = None) -> tuple[datetim
     return dt_utc, recurrence
 
 
-def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[datetime, str | None]:
+def _parse_reminder_local(
+    text: str, tz_name: str | None = None
+) -> tuple[datetime, str | None]:
     """Internal: parses time tokens treating "9:00" / "сегодня в 9" / etc.
     as wall-clock time in the user's tz. Returns a tz-aware datetime in
     that zone."""
@@ -264,9 +297,9 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
 
     # --- Recurring patterns ---------------------------------------------
     if re.search(
-        r'ежедневно|каждый\s+день|every\s+day|daily|по\s+календарю|'
-        r'каждое\s+утро|каждое\s+утра|каждый\s+вечер|каждый\s+вечера|'
-        r'каждую\s+ночь|каждую\s+ночи|каждое\s+дн[яе]',
+        r"ежедневно|каждый\s+день|every\s+day|daily|по\s+календарю|"
+        r"каждое\s+утро|каждое\s+утра|каждый\s+вечер|каждый\s+вечера|"
+        r"каждую\s+ночь|каждую\s+ночи|каждое\s+дн[яе]",
         lowered,
     ):
         recurrence = "daily"
@@ -275,7 +308,10 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
             target += timedelta(days=1)
         return target, recurrence
 
-    if re.search(r'каждый\s+будний|будни(е)?|рабочие\s+дни|каждый\s+рабочий|weekday|по\s+будням', lowered):
+    if re.search(
+        r"каждый\s+будний|будни(е)?|рабочие\s+дни|каждый\s+рабочий|weekday|по\s+будням",
+        lowered,
+    ):
         recurrence = "weekday"
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if target <= now or target.weekday() >= 5:
@@ -284,7 +320,7 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
                 target += timedelta(days=1)
         return target, recurrence
 
-    if re.search(r'каждый\s+выходной|выходные|weekend|по\s+выходным', lowered):
+    if re.search(r"каждый\s+выходной|выходные|weekend|по\s+выходным", lowered):
         recurrence = "weekend"
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if target <= now or target.weekday() < 5:
@@ -293,14 +329,14 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
                 target += timedelta(days=1)
         return target, recurrence
 
-    if re.search(r'еженедельно|every\s+week|weekly|каждую\s+неделю', lowered):
+    if re.search(r"еженедельно|every\s+week|weekly|каждую\s+неделю", lowered):
         recurrence = "weekly"
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if target <= now:
             target += timedelta(weeks=1)
         return target, recurrence
 
-    if re.search(r'ежемесячно|every\s+month|monthly|каждый\s+месяц', lowered):
+    if re.search(r"ежемесячно|every\s+month|monthly|каждый\s+месяц", lowered):
         recurrence = "monthly"
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         # Approximate monthly: 30 days from now
@@ -308,8 +344,17 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
 
     # --- Every N minutes/hours/days/weeks/months --------------------------
     interval_match = re.search(
-        r'(каждые|раз\s+в)\s+(\d+)\s*(' + _MINUTE_UNITS + '|' + _HOUR_UNITS + '|' +
-        _DAY_UNITS + '|' + _WEEK_UNITS + '|' + _MONTH_UNITS + r')?',
+        r"(каждые|раз\s+в)\s+(\d+)\s*("
+        + _MINUTE_UNITS
+        + "|"
+        + _HOUR_UNITS
+        + "|"
+        + _DAY_UNITS
+        + "|"
+        + _WEEK_UNITS
+        + "|"
+        + _MONTH_UNITS
+        + r")?",
         lowered,
     )
     if interval_match:
@@ -357,7 +402,15 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
         recurrence = matched_day_key
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         target_weekday = target.weekday()
-        day_num = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}[matched_day_key]
+        day_num = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+            "sunday": 6,
+        }[matched_day_key]
         if target_weekday != day_num or target <= now:
             days_ahead = (day_num - target_weekday) % 7
             if days_ahead == 0:
@@ -367,14 +420,23 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
 
     # --- Relative offsets -----------------------------------------------
     # через неделю / через месяц (no digit)
-    if re.search(r'через\s+' + _WEEK_UNITS, lowered):
+    if re.search(r"через\s+" + _WEEK_UNITS, lowered):
         return now + timedelta(weeks=1), None
-    if re.search(r'через\s+' + _MONTH_UNITS, lowered):
+    if re.search(r"через\s+" + _MONTH_UNITS, lowered):
         return now + timedelta(days=30), None
 
     through_match = re.search(
-        r'через\s+(\d+)\s*(' + _MINUTE_UNITS + '|' + _HOUR_UNITS + '|' +
-        _DAY_UNITS + '|' + _WEEK_UNITS + '|' + _MONTH_UNITS + r')?',
+        r"через\s+(\d+)\s*("
+        + _MINUTE_UNITS
+        + "|"
+        + _HOUR_UNITS
+        + "|"
+        + _DAY_UNITS
+        + "|"
+        + _WEEK_UNITS
+        + "|"
+        + _MONTH_UNITS
+        + r")?",
         lowered,
     )
     if through_match:
@@ -393,7 +455,7 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
         return now + timedelta(minutes=num), None
 
     # --- Today / tomorrow -----------------------------------------------
-    today_match = re.search(r'сегодня\s+в\s+(\d{1,2}):(\d{2})', lowered)
+    today_match = re.search(r"сегодня\s+в\s+(\d{1,2}):(\d{2})", lowered)
     if today_match:
         h = max(0, min(23, int(today_match.group(1))))
         m = max(0, min(59, int(today_match.group(2))))
@@ -409,11 +471,13 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
         return target, None
 
     if "завтра" in lowered:
-        time_match = re.search(r'(\d{1,2}):(\d{2})', lowered)
+        time_match = re.search(r"(\d{1,2}):(\d{2})", lowered)
         if time_match:
             h = max(0, min(23, int(time_match.group(1))))
             m = max(0, min(59, int(time_match.group(2))))
-        target = (now + timedelta(days=1)).replace(hour=h, minute=m, second=0, microsecond=0)
+        target = (now + timedelta(days=1)).replace(
+            hour=h, minute=m, second=0, microsecond=0
+        )
         return target, None
 
     # --- ISO datetime ---------------------------------------------------
@@ -422,8 +486,8 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt, None
-    except Exception:
-        pass
+    except ValueError as exc:
+        logger.debug("ISO datetime parse failed for %r: %s", lowered, exc)
 
     return now + timedelta(minutes=5), None
 
@@ -431,7 +495,12 @@ def _parse_reminder_local(text: str, tz_name: str | None = None) -> tuple[dateti
 async def _process_remind(user_id: int, text: str, action: str = "notify"):
     if db is None:
         from bot.bot import bot as aiogram_bot
-        await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
+
+        await aiogram_bot.send_message(
+            chat_id=user_id,
+            text="База данных недоступна.",
+            reply_markup=command_keyboard,
+        )
         return
 
     tz_name = _user_tz_name(user_id)
@@ -455,11 +524,12 @@ async def _process_remind(user_id: int, text: str, action: str = "notify"):
     local_str = format_local(trigger_at, tz_name)
 
     from bot.bot import bot as aiogram_bot
+
     await aiogram_bot.send_message(
         chat_id=user_id,
         text=f"✅ Напоминание добавлено\n"
-             f"🕐 Сработает: {local_str}{rec_label}\n"
-             f"📝 Текст: {content}",
+        f"🕐 Сработает: {local_str}{rec_label}\n"
+        f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
 
@@ -468,7 +538,12 @@ async def _process_task_from_text(user_id: int, text: str):
     """Free-form task: parse time, strip it from content, schedule AI execution."""
     if db is None:
         from bot.bot import bot as aiogram_bot
-        await aiogram_bot.send_message(chat_id=user_id, text="База данных недоступна.", reply_markup=command_keyboard)
+
+        await aiogram_bot.send_message(
+            chat_id=user_id,
+            text="База данных недоступна.",
+            reply_markup=command_keyboard,
+        )
         return
 
     tz_name = _user_tz_name(user_id)
@@ -492,6 +567,7 @@ async def _process_task_from_text(user_id: int, text: str):
     error = _validate_task_content(content)
     if error:
         from bot.bot import bot as aiogram_bot
+
         await aiogram_bot.send_message(
             chat_id=user_id,
             text=f"❓ Не понял задачу: {error}\n\nПример: «задача через час погода в Москве», «задача завтра в 9 поищи новости Tesla».",
@@ -512,12 +588,13 @@ async def _process_task_from_text(user_id: int, text: str):
     rec_label = f" ({recurring})" if recurring else ""
     local_str = format_local(trigger_at, tz_name)
     from bot.bot import bot as aiogram_bot
+
     await aiogram_bot.send_message(
         chat_id=user_id,
         text=f"✅ Задача добавлена\n"
-             f"🕐 Сработает: {local_str}{rec_label}\n"
-             f"🤖 Режим: AI-выполнение\n"
-             f"📝 Текст: {content}",
+        f"🕐 Сработает: {local_str}{rec_label}\n"
+        f"🤖 Режим: AI-выполнение\n"
+        f"📝 Текст: {content}",
         reply_markup=command_keyboard,
     )
 
@@ -535,14 +612,18 @@ def _validate_task_content(content: str) -> str | None:
     # Weather without city
     if re.search(r"\bпогод|\bweather|\bтемператур", lowered):
         # Strip the keyword and check what's left
-        stripped = re.sub(r"\b(?:погод\w*|weather|температур\w*|прогноз\w*)\b", "", lowered)
+        stripped = re.sub(
+            r"\b(?:погод\w*|weather|температур\w*|прогноз\w*)\b", "", lowered
+        )
         stripped = re.sub(r"\b(?:в|in|для|по|сейчас|today|current)\b", "", stripped)
         stripped = re.sub(r"[^\w\s\-]", "", stripped).strip()
         if not stripped:
             return "не указан город. Скажи «погода в Москве» или похоже."
     # Search without query
     if re.search(r"^\s*(?:поищи|найди|загугли|search)\b", lowered):
-        stripped = re.sub(r"^\s*(?:поищи|найди|загугли|search)\b\s*", "", lowered).strip()
+        stripped = re.sub(
+            r"^\s*(?:поищи|найди|загугли|search)\b\s*", "", lowered
+        ).strip()
         if not stripped or len(stripped) < 3:
             return "не указан запрос для поиска. Скажи «поищи новости Tesla»."
     return None

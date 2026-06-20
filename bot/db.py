@@ -1,6 +1,9 @@
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -12,8 +15,8 @@ class Database:
         # No-op when the index is already in sync.
         try:
             self.backfill_memories_fts()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to backfill FTS index: %s", exc)
 
     def _read_allowed_chat_ids(self) -> str:
         """Read env allow-list fresh via module attribute, not a local binding."""
@@ -1141,7 +1144,7 @@ class Database:
             if not expected.exists():
                 return p.is_absolute() and str(p) != str(Path(self.db_path).resolve())
             return False
-        except Exception:
+        except (OSError, ValueError):
             return False
 
     def _unlink_safely(self, path: str | None, *, user_id: int | None = None) -> None:
@@ -1158,8 +1161,8 @@ class Database:
             p = Path(path)
             if p.is_file():
                 p.unlink()
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning("Failed to unlink %s: %s", path, exc)
 
     def delete_user(self, user_id: int) -> bool:
         """Remove a user and all associated data, including local files.

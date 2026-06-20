@@ -87,7 +87,10 @@ async def transcribe_voice(
         )
 
     if (voice.file_size or 0) > MAX_VOICE_BYTES:
-        return None, f"🎤 Голосовое сообщение больше {MAX_VOICE_MB} МБ. Telegram не позволяет скачать его."
+        return (
+            None,
+            f"🎤 Голосовое сообщение больше {MAX_VOICE_MB} МБ. Telegram не позволяет скачать его.",
+        )
 
     tmp_path = None
     try:
@@ -108,15 +111,15 @@ async def transcribe_voice(
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.warning("Failed to remove voice temp file %s: %s", tmp_path, exc)
 
 
 async def _run_tts_local(text: str) -> str | None:
     """Run local piper-tts if installed. Return path to WAV file or None."""
-    try:
-        import subprocess  # noqa: S404
-    except Exception:
+    import importlib.util
+
+    if importlib.util.find_spec("subprocess") is None:
         return None
 
     model_name = os.getenv("PIPER_MODEL")
@@ -134,14 +137,20 @@ async def _run_tts_local(text: str) -> str | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             "piper-tts",
-            "--model", str(model_path),
-            "--output_file", out_path,
+            "--model",
+            str(model_path),
+            "--output_file",
+            out_path,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate(text.encode("utf-8"))
-        if proc.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        if (
+            proc.returncode != 0
+            or not os.path.exists(out_path)
+            or os.path.getsize(out_path) == 0
+        ):
             return None
         return out_path
     except Exception as e:
@@ -181,7 +190,9 @@ async def send_voice_reply(message: Message, text: str, bot) -> None:
         return
 
     # Fallback: text-only with explanation if local TTS isn't configured.
-    await message.answer(text + "\n\n_Голосовой ответ доступен только с локальным piper-tts._")
+    await message.answer(
+        text + "\n\n_Голосовой ответ доступен только с локальным piper-tts._"
+    )
 
 
 def voice_output_enabled(user_id: int) -> bool:

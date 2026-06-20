@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import aiohttp
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -523,8 +524,8 @@ def _refresh_completion_system_prompt(user_id: int) -> None:
         from bot.routers import completion
 
         completion.refresh_system_prompt(user_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to refresh system prompt for %s: %s", user_id, exc)
 
 
 # --- Reminders ---
@@ -1882,8 +1883,12 @@ async def cb_del_reminder(callback: CallbackQuery):
         await callback.answer("Напоминание удалено")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Failed to clear reminder delete markup for %s: %s",
+                callback.from_user.id,
+                exc,
+            )
         await callback.message.edit_text("✅ Напоминание удалено.")
     except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
@@ -2071,8 +2076,12 @@ async def cb_del_monitor(callback: CallbackQuery):
         await callback.answer(f"Монитор #{mid} удалён")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Failed to clear monitor delete markup for %s: %s",
+                callback.from_user.id,
+                exc,
+            )
         await callback.message.edit_text(f"✅ Монитор #{mid} удалён.")
     except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
@@ -2098,8 +2107,12 @@ async def cb_del_memory(callback: CallbackQuery):
         await callback.answer(f"Запись #{mid} удалена")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Failed to clear memory delete markup for %s: %s",
+                callback.from_user.id,
+                exc,
+            )
         await callback.message.edit_text(f"✅ Запись #{mid} удалена.")
     except Exception:
         await callback.answer("Ошибка удаления", show_alert=True)
@@ -2394,13 +2407,11 @@ def _format_search_results(query: str, items: list[dict]) -> str:
         source = ""
         if url:
             try:
-                from urllib.parse import urlparse
-
                 domain = urlparse(url).netloc.replace("www.", "")
                 if domain:
                     source = f"🌐 {domain}"
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.warning("Failed to parse search result URL %r: %s", url, exc)
 
         text += f"{i}. {title}\n"
         if source:
@@ -3336,8 +3347,8 @@ async def cmd_admin_remove(message: Message, state: FSMContext):
         from bot.routers import completion
 
         completion._delete_chat(target_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to drop in-memory chat for %s: %s", target_id, exc)
 
     await message.answer(
         f"🗑 Пользователь `{target_id}` и все его данные удалены.",

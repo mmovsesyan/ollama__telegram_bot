@@ -1,7 +1,10 @@
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from bot.settings import MAX_CONTEXT_MESSAGES, OLLAMA_MODEL
+
+logger = logging.getLogger(__name__)
 
 
 class ContextBuilder:
@@ -33,38 +36,56 @@ class ContextBuilder:
                         "summary_style": prefs.get("style") or "short",
                         "name": prefs.get("name") or None,
                     }
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to load user prefs for %s: %s", user_id, exc)
 
             try:
                 session_id = db.get_or_create_active_session(user_id, OLLAMA_MODEL)
                 latest_summary = db.get_latest_summary(session_id)
                 if latest_summary and latest_summary.get("summary"):
                     dialogue_summary = latest_summary["summary"]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load session summary for %s: %s", user_id, exc
+                )
 
             try:
-                recent_messages = db.get_session_messages(user_id, limit=MAX_CONTEXT_MESSAGES)
-            except Exception:
+                recent_messages = db.get_session_messages(
+                    user_id, limit=MAX_CONTEXT_MESSAGES
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load session messages for %s: %s", user_id, exc
+                )
                 recent_messages = []
 
             try:
                 query = message_text.strip()
                 # Drop leading command-like words so search targets the subject.
                 for prefix in (
-                    "запомни ", "запомни, ", "факт ", "факт: ",
-                    "заметка ", "заметка: ", "напомни ",
-                    "что я говорил про ", "что у меня про ",
-                    "найди у меня про ", "найди в базе ", "поищи в базе ",
-                    "из моей базы ", "в моей базе ", "из базы ",
+                    "запомни ",
+                    "запомни, ",
+                    "факт ",
+                    "факт: ",
+                    "заметка ",
+                    "заметка: ",
+                    "напомни ",
+                    "что я говорил про ",
+                    "что у меня про ",
+                    "найди у меня про ",
+                    "найди в базе ",
+                    "поищи в базе ",
+                    "из моей базы ",
+                    "в моей базе ",
+                    "из базы ",
                 ):
                     if query.lower().startswith(prefix):
-                        query = query[len(prefix):].strip()
+                        query = query[len(prefix) :].strip()
                         break
                 if query:
                     relevant_memory = db.search_memories(user_id, query, limit=5)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to search memories for %s: %s", user_id, exc)
                 relevant_memory = []
 
         return {

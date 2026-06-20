@@ -1,5 +1,9 @@
+import logging
+
 from bot.intent.schemas import ToolContext, ToolResult
 from bot.intent.tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class NoteTool(BaseTool):
@@ -51,8 +55,8 @@ def _refresh_active_chat_system_prompt(user_id: int) -> None:
         from bot.routers import completion
 
         completion.refresh_system_prompt(user_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to refresh chat system prompt for %s: %s", user_id, exc)
 
 
 class MonitorTool(BaseTool):

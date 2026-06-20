@@ -86,8 +86,13 @@ def _parse_rss_date(entry: Any) -> datetime | None:
             try:
                 # feedparser returns time.struct_time in UTC.
                 return datetime(*value[:6], tzinfo=timezone.utc)
-            except Exception:
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.debug(
+                    "Failed to parse RSS date %s for %s: %s",
+                    attr,
+                    getattr(entry, "link", ""),
+                    exc,
+                )
     # Fallback: try raw strings.
     for attr in ("published", "updated", "created", "date"):
         raw = getattr(entry, attr, None)
@@ -97,8 +102,8 @@ def _parse_rss_date(entry: Any) -> datetime | None:
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
                 return dt
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.debug("Failed to parse RSS raw date %s %r: %s", attr, raw, exc)
     return None
 
 
@@ -106,7 +111,8 @@ def _extract_source_from_url(url: str) -> str:
     try:
         domain = urlparse(url).netloc.replace("www.", "")
         return domain
-    except Exception:
+    except ValueError as exc:
+        logger.debug("Failed to parse source URL %r: %s", url, exc)
         return ""
 
 
@@ -126,26 +132,34 @@ def _extract_image_url(entry: Any) -> str | None:
         media = getattr(entry, "media_thumbnail", None) or []
         if media:
             return media[0].get("url") or media[0].get("href")
-    except Exception:
-        pass
+    except (AttributeError, KeyError, TypeError) as exc:
+        logger.debug(
+            "Failed to read media_thumbnail for %s: %s", getattr(entry, "link", ""), exc
+        )
     try:
         content = getattr(entry, "media_content", None) or []
         for c in content:
             if c.get("type", "").startswith("image/"):
                 return c.get("url") or c.get("href")
-    except Exception:
-        pass
+    except (AttributeError, KeyError, TypeError) as exc:
+        logger.debug(
+            "Failed to read media_content for %s: %s", getattr(entry, "link", ""), exc
+        )
     try:
         enc = getattr(entry, "enclosures", None) or []
         for e in enc:
             if (e.get("type") or "").startswith("image/"):
                 return e.get("href") or e.get("url")
-    except Exception:
-        pass
+    except (AttributeError, KeyError, TypeError) as exc:
+        logger.debug(
+            "Failed to read enclosures for %s: %s", getattr(entry, "link", ""), exc
+        )
     try:
         return getattr(entry, "image", None) or None
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as exc:
+        logger.debug(
+            "Failed to read entry image for %s: %s", getattr(entry, "link", ""), exc
+        )
     return None
 
 
@@ -304,8 +318,10 @@ def _mark_shown(user_id: int, items: list[NewsItem]) -> None:
     for item in items:
         try:
             db.mark_news_shown(user_id, item.url, item.title)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to mark news shown for %s %r: %s", user_id, item.url, exc
+            )
 
 
 def _source_emoji(source: str) -> str:

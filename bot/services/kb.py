@@ -84,7 +84,9 @@ async def summarize_kb(user_id: int) -> str:
     output = ""
     try:
         async with asyncio.timeout(60):
-            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.4):
+            async for is_done, chunk in generate_chat_completion(
+                messages, OLLAMA_MODEL, temperature=0.4
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -116,8 +118,8 @@ def _format_web_fallback_item(item: dict, idx: int) -> str:
     if url:
         try:
             source = f"🌐 {urlparse(url).netloc.replace('www.', '')}"
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("Failed to parse web result URL %r: %s", url, exc)
 
     lines = [f"{idx}. {title}"]
     if source:

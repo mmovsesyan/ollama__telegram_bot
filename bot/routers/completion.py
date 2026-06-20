@@ -5,6 +5,7 @@ import tempfile
 import time
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -45,6 +46,10 @@ def _is_cloud_model(model_id: str) -> bool:
         return True
     # Accept model names that already end with :cloud even if not in the list.
     return normalized.endswith(":cloud")
+
+
+def _log_warning(msg: str) -> None:
+    logger.warning(msg)
 
 
 db = None  # injected in __init__
@@ -152,15 +157,15 @@ async def generate(message: Message, user_id: int, text: str):
     _create_chat(user_id)
     chat = chats[user_id]
 
-    try:
-        if chat.linked_last_messages:
+    if chat.linked_last_messages:
+        try:
             await aiogram_bot.edit_message_reply_markup(
                 chat_id=user_id,
                 message_id=chat.linked_last_messages,
                 reply_markup=None,
             )
-    except Exception:
-        pass
+        except TelegramBadRequest as exc:
+            _log_warning(f"Failed to clear reply markup for {user_id}: {exc}")
 
     chat.linked_last_messages = None
     await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
@@ -268,8 +273,8 @@ async def generate(message: Message, user_id: int, text: str):
             asyncio.create_task(
                 extract_facts_from_exchange(db, user_id, prompt, assistant_content)
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_warning(f"Failed to schedule fact extraction for {user_id}: {exc}")
 
     if db and chat.session_id:
         asyncio.create_task(_maybe_compact(user_id, chat))
@@ -401,8 +406,8 @@ async def _maybe_compact(user_id: int, chat: UserChat):
             from bot.services.kb_extract import compress_pending_memories
 
             asyncio.create_task(compress_pending_memories(db, user_id, limit=5))
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_warning(f"Failed to schedule memory compression for {user_id}: {exc}")
 
         base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][
             :1
@@ -761,8 +766,8 @@ async def like(callback: CallbackQuery):
                 message_id=chat.linked_last_messages,
                 reply_markup=None,
             )
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            _log_warning(f"Failed to clear reply markup for {user_id}: {exc}")
     chat.linked_last_messages = None
     await callback.answer("👍")
 
@@ -784,8 +789,8 @@ async def dislike(callback: CallbackQuery):
             user_id,
             message_id=chat.linked_last_messages,
         )
-    except Exception:
-        pass
+    except TelegramBadRequest as exc:
+        _log_warning(f"Failed to remove like callback markup for {user_id}: {exc}")
     if not chat.previous_prompt:
         return
     if not isinstance(callback.message, Message):
@@ -870,8 +875,8 @@ async def handle_document(message: Message, state: FSMContext):
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except Exception:
-                pass
+            except OSError as exc:
+                _log_warning(f"Failed to remove temp file {tmp_path}: {exc}")
 
     summary = doc.get("summary") or "[краткое содержание недоступно]"
     reply = (
@@ -939,8 +944,8 @@ async def handle_photo(message: Message, state: FSMContext):
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except Exception:
-                pass
+            except OSError as exc:
+                _log_warning(f"Failed to remove temp file {tmp_path}: {exc}")
 
     lines = ["📷 Описание:"]
     description = image.get("description") or "[не удалось получить описание]"
@@ -984,6 +989,7 @@ async def cb_image_close(callback: CallbackQuery, state: FSMContext):
     if callback.message:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            uid = callback.from_user.id if callback.from_user else "unknown"
+            _log_warning(f"Failed to close image reply markup for {uid}: {exc}")
     await callback.answer("Закрыто")

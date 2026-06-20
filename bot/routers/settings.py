@@ -2,16 +2,25 @@
 
 import re
 
+import logging
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from bot.db import Database
 from bot.keyboards.reply import command_keyboard
 from bot.security import is_allowed
 from bot.services import briefing as briefing_service
-from bot.services.profile import now_in_tz
 from bot.states import BotStates
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -51,10 +60,14 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
                     text=f"🔔 Брифинг: {_bool_label(briefing_on)}",
                     callback_data="settings:toggle_briefing",
                 ),
-                InlineKeyboardButton(text="🕐 Время", callback_data="settings:set_time"),
+                InlineKeyboardButton(
+                    text="🕐 Время", callback_data="settings:set_time"
+                ),
             ],
             [
-                InlineKeyboardButton(text="📰 Категории", callback_data="settings:set_categories"),
+                InlineKeyboardButton(
+                    text="📰 Категории", callback_data="settings:set_categories"
+                ),
                 InlineKeyboardButton(text="🏙 Город", callback_data="settings:set_city"),
             ],
             [
@@ -78,8 +91,12 @@ def _settings_keyboard(prefs: dict) -> InlineKeyboardMarkup:
                 ),
             ],
             [
-                InlineKeyboardButton(text="🕙 Время дайджеста", callback_data="settings:set_digest_time"),
-                InlineKeyboardButton(text="🗑 Срок хранения", callback_data="settings:set_retention"),
+                InlineKeyboardButton(
+                    text="🕙 Время дайджеста", callback_data="settings:set_digest_time"
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Срок хранения", callback_data="settings:set_retention"
+                ),
             ],
             [
                 InlineKeyboardButton(text="❌ Закрыть", callback_data="settings:close"),
@@ -110,7 +127,9 @@ def _settings_text(prefs: dict) -> str:
     )
 
 
-@router.message(lambda m: m.text and (m.text == "/settings" or m.text.startswith("/settings ")))
+@router.message(
+    lambda m: m.text and (m.text == "/settings" or m.text.startswith("/settings "))
+)
 @router.message(F.text == "⚙️ Настройки")
 async def cmd_settings(message: Message, state: FSMContext):
     await state.clear()
@@ -132,8 +151,8 @@ async def cb_settings_close(callback: CallbackQuery, state: FSMContext):
     if callback.message:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            logger.warning("Failed to close settings markup: %s", exc)
     await callback.answer("Закрыто")
 
 
@@ -152,9 +171,11 @@ async def cb_toggle_briefing(callback: CallbackQuery):
     db.set_user_prefs(callback.from_user.id, briefing_enabled=new_val)
     prefs = _user_prefs(callback.from_user.id)
     try:
-        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
-    except Exception:
-        pass
+        await callback.message.edit_text(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Failed to update settings markup for briefing: %s", exc)
     await callback.answer(f"Брифинг {_bool_label(new_val)}")
 
 
@@ -173,9 +194,11 @@ async def cb_toggle_proactive(callback: CallbackQuery):
     db.set_user_prefs(callback.from_user.id, proactive_enabled=new_val)
     prefs = _user_prefs(callback.from_user.id)
     try:
-        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
-    except Exception:
-        pass
+        await callback.message.edit_text(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Failed to update settings markup for proactive: %s", exc)
     await callback.answer(f"Проактивность {_bool_label(new_val)}")
 
 
@@ -194,9 +217,11 @@ async def cb_toggle_voice(callback: CallbackQuery):
     db.set_user_prefs(callback.from_user.id, voice_output_enabled=new_val)
     prefs = _user_prefs(callback.from_user.id)
     try:
-        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
-    except Exception:
-        pass
+        await callback.message.edit_text(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Failed to update settings markup for voice: %s", exc)
     await callback.answer(f"Голосовой ответ {_bool_label(new_val)}")
 
 
@@ -215,9 +240,11 @@ async def cb_toggle_smart_reminders(callback: CallbackQuery):
     db.set_user_prefs(callback.from_user.id, smart_reminders_enabled=new_val)
     prefs = _user_prefs(callback.from_user.id)
     try:
-        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
-    except Exception:
-        pass
+        await callback.message.edit_text(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Failed to update settings markup for smart reminders: %s", exc)
     await callback.answer(f"Умные напоминания {_bool_label(new_val)}")
 
 
@@ -236,9 +263,11 @@ async def cb_toggle_digest(callback: CallbackQuery):
     db.set_user_prefs(callback.from_user.id, digest_enabled=new_val)
     prefs = _user_prefs(callback.from_user.id)
     try:
-        await callback.message.edit_text(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
-    except Exception:
-        pass
+        await callback.message.edit_text(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Failed to update settings markup for digest: %s", exc)
     await callback.answer(f"Вечерний дайджест {_bool_label(new_val)}")
 
 
@@ -253,7 +282,13 @@ async def cb_set_time(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🕐 Во сколько присылать брифинг?\nОтветь в формате HH:MM, например: 08:00",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="settings:close_input"
+                    )
+                ]
+            ]
         ),
     )
     await callback.answer("Введи время")
@@ -272,7 +307,13 @@ async def cb_set_categories(callback: CallbackQuery, state: FSMContext):
         "Перечисли через запятую. Доступны:\n"
         "tech, markets, ai, science, crypto, world",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="settings:close_input"
+                    )
+                ]
+            ]
         ),
     )
     await callback.answer("Введи категории")
@@ -289,7 +330,13 @@ async def cb_set_city(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🏙 Для какого города показывать погоду?\nНапример: Москва",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="settings:close_input"
+                    )
+                ]
+            ]
         ),
     )
     await callback.answer("Введи город")
@@ -300,7 +347,9 @@ async def cb_close_input(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     if callback.from_user and callback.message:
         prefs = _user_prefs(callback.from_user.id)
-        await callback.message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
+        await callback.message.answer(
+            _settings_text(prefs), reply_markup=_settings_keyboard(prefs)
+        )
     await callback.answer("Отменено")
 
 
@@ -382,7 +431,13 @@ async def cb_set_digest_time(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🕙 Во сколько присылать вечерний дайджест?\nОтветь в формате HH:MM, например: 20:00",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="settings:close_input"
+                    )
+                ]
+            ]
         ),
     )
     await callback.answer("Введи время")
@@ -423,7 +478,13 @@ async def cb_set_retention(callback: CallbackQuery, state: FSMContext):
         "🗑 Через сколько дней удалять старые документы и фото?\n"
         "Введи число (например: 90) или 0, чтобы хранить всегда.",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="settings:close_input")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="settings:close_input"
+                    )
+                ]
+            ]
         ),
     )
     await callback.answer("Введи срок")
@@ -454,7 +515,9 @@ async def process_retention_days(message: Message, state: FSMContext):
     await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
 
 
-@router.message(lambda m: m.text and (m.text == "/briefing" or m.text.startswith("/briefing")))
+@router.message(
+    lambda m: m.text and (m.text == "/briefing" or m.text.startswith("/briefing"))
+)
 async def cmd_briefing(message: Message, state: FSMContext):
     """Send the morning briefing on demand."""
     await state.clear()
@@ -464,10 +527,13 @@ async def cmd_briefing(message: Message, state: FSMContext):
         return
     await message.answer("🌅 Собираю брифинг...")
     from bot.bot import bot as aiogram_bot
+
     await briefing_service.send_briefing(message.from_user.id, aiogram_bot)
 
 
-@router.message(lambda m: m.text and (m.text == "/digest" or m.text.startswith("/digest")))
+@router.message(
+    lambda m: m.text and (m.text == "/digest" or m.text.startswith("/digest"))
+)
 async def cmd_digest(message: Message, state: FSMContext):
     """Send the evening digest on demand."""
     await state.clear()
@@ -478,4 +544,5 @@ async def cmd_digest(message: Message, state: FSMContext):
     await message.answer("🌙 Собираю вечерний дайджест...")
     from bot.bot import bot as aiogram_bot
     from bot.services import digest as digest_service
+
     await digest_service.send_digest(message.from_user.id, aiogram_bot)

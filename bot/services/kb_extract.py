@@ -57,11 +57,42 @@ def _looks_skippable(user_text: str, assistant_text: str) -> bool:
 
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
-_STOPWORDS = frozenset({
-    "и", "в", "на", "по", "с", "у", "о", "об", "за", "из", "для", "к", "до",
-    "от", "что", "как", "это", "тот", "эта", "его", "её", "the", "a", "an",
-    "of", "to", "in", "on", "at", "for", "is", "are",
-})
+_STOPWORDS = frozenset(
+    {
+        "и",
+        "в",
+        "на",
+        "по",
+        "с",
+        "у",
+        "о",
+        "об",
+        "за",
+        "из",
+        "для",
+        "к",
+        "до",
+        "от",
+        "что",
+        "как",
+        "это",
+        "тот",
+        "эта",
+        "его",
+        "её",
+        "the",
+        "a",
+        "an",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "is",
+        "are",
+    }
+)
 
 
 def _stem(tok: str) -> str:
@@ -71,19 +102,61 @@ def _stem(tok: str) -> str:
     if len(tok) <= 4:
         return tok
     # Common Russian endings (longest first) + a couple of English ones.
-    for suf in ("ятся", "иться", "ться", "ются", "ями", "ями", "ого", "его",
-                "ему", "ому", "ыми", "ими", "ее", "ой", "ый", "ий", "ая", "яя",
-                "ое", "ие", "ые", "ам", "ям", "ах", "ях", "ом", "ем", "ой", "ей",
-                "у", "ю", "а", "я", "ы", "и", "е", "о", "ь",
-                "ing", "ed", "es", "s"):
+    for suf in (
+        "ятся",
+        "иться",
+        "ться",
+        "ются",
+        "ями",
+        "ями",
+        "ого",
+        "его",
+        "ему",
+        "ому",
+        "ыми",
+        "ими",
+        "ее",
+        "ой",
+        "ый",
+        "ий",
+        "ая",
+        "яя",
+        "ое",
+        "ие",
+        "ые",
+        "ам",
+        "ям",
+        "ах",
+        "ях",
+        "ом",
+        "ем",
+        "ой",
+        "ей",
+        "у",
+        "ю",
+        "а",
+        "я",
+        "ы",
+        "и",
+        "е",
+        "о",
+        "ь",
+        "ing",
+        "ed",
+        "es",
+        "s",
+    ):
         if tok.endswith(suf) and len(tok) - len(suf) >= 3:
-            return tok[:-len(suf)]
+            return tok[: -len(suf)]
     return tok
 
 
 def _tokenize(s: str) -> set[str]:
-    return {_stem(t) for t in _TOKEN_RE.findall(s.lower())
-            if t not in _STOPWORDS and len(t) > 2}
+    return {
+        _stem(t)
+        for t in _TOKEN_RE.findall(s.lower())
+        if t not in _STOPWORDS and len(t) > 2
+    }
 
 
 def _is_near_duplicate(content: str, others: list[str]) -> bool:
@@ -194,11 +267,15 @@ async def extract_facts_from_exchange(
     try:
         async with asyncio.timeout(12):
             messages = [
-                OllamaChatMessage(role="system", content="Ты извлекаешь факты для базы знаний."),
+                OllamaChatMessage(
+                    role="system", content="Ты извлекаешь факты для базы знаний."
+                ),
                 OllamaChatMessage(role="user", content=prompt),
             ]
             raw = ""
-            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.2):
+            async for is_done, chunk in generate_chat_completion(
+                messages, OLLAMA_MODEL, temperature=0.2
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -239,9 +316,12 @@ async def extract_facts_from_exchange(
         # visible in the current session without a restart or /clear.
         try:
             from bot.routers import completion
+
             completion.refresh_system_prompt(user_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to refresh system prompt after extraction %s: %s", user_id, exc
+            )
     return saved
 
 
@@ -265,11 +345,15 @@ async def compress_memory_dict(db: Any, memory: dict) -> bool:
     try:
         async with asyncio.timeout(15):
             messages = [
-                OllamaChatMessage(role="system", content="Ты сжимаешь заметки до сути."),
+                OllamaChatMessage(
+                    role="system", content="Ты сжимаешь заметки до сути."
+                ),
                 OllamaChatMessage(role="user", content=prompt),
             ]
             raw = ""
-            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.2):
+            async for is_done, chunk in generate_chat_completion(
+                messages, OLLAMA_MODEL, temperature=0.2
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -299,7 +383,11 @@ async def compress_pending_memories(db: Any, user_id: int, limit: int = 5) -> in
         memories = db.get_memories(user_id)
     except Exception:
         return 0
-    pending = [m for m in memories if not m.get("summary") and len((m.get("content") or "")) >= 500]
+    pending = [
+        m
+        for m in memories
+        if not m.get("summary") and len((m.get("content") or "")) >= 500
+    ]
     saved = 0
     for mem in pending[:limit]:
         if await compress_memory_dict(db, mem):

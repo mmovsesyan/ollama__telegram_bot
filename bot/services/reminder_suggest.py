@@ -66,8 +66,10 @@ def _build_analysis_prompt(user_id: int) -> str:
         try:
             raw = db.get_session_messages(user_id, limit=20)
             messages = [{"role": m["role"], "content": m["content"]} for m in raw]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to load session messages for analysis %s: %s", user_id, exc
+            )
 
     memories: list[str] = []
     if db is not None:
@@ -76,8 +78,8 @@ def _build_analysis_prompt(user_id: int) -> str:
                 content = (m.get("content") or "").strip()
                 if content:
                     memories.append(content)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load memories for analysis %s: %s", user_id, exc)
 
     reminders: list[str] = []
     if db is not None:
@@ -86,12 +88,10 @@ def _build_analysis_prompt(user_id: int) -> str:
                 content = (r.get("content") or "").strip()
                 if content:
                     reminders.append(content)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load reminders for analysis %s: %s", user_id, exc)
 
-    convo_text = "\n".join(
-        f"{m['role']}: {m['content']}" for m in messages[-10:]
-    )
+    convo_text = "\n".join(f"{m['role']}: {m['content']}" for m in messages[-10:])
     memory_text = "\n".join(f"- {m}" for m in memories)
     reminders_text = "\n".join(f"- {r}" for r in reminders)
 
@@ -154,7 +154,7 @@ def _extract_json(text: str) -> list[dict]:
     if end == -1:
         return []
     try:
-        return json.loads(text[start:end + 1])
+        return json.loads(text[start : end + 1])
     except Exception:
         return []
 
@@ -175,13 +175,17 @@ async def analyze(user_id: int) -> list[dict]:
 
     prompt = _build_analysis_prompt(user_id)
     messages = [
-        OllamaChatMessage(role="system", content="Ты анализируешь диалог и находишь важные моменты."),
+        OllamaChatMessage(
+            role="system", content="Ты анализируешь диалог и находишь важные моменты."
+        ),
         OllamaChatMessage(role="user", content=prompt),
     ]
     raw = ""
     try:
         async with asyncio.timeout(30):
-            async for is_done, chunk in generate_chat_completion(messages, OLLAMA_MODEL, temperature=0.3):
+            async for is_done, chunk in generate_chat_completion(
+                messages, OLLAMA_MODEL, temperature=0.3
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -203,9 +207,11 @@ async def analyze(user_id: int) -> list[dict]:
     reminders: list[str] = []
     try:
         memories = [(m.get("content") or "").strip() for m in db.get_memories(user_id)]
-        reminders = [(r.get("content") or "").strip() for r in db.get_user_reminders(user_id)]
-    except Exception:
-        pass
+        reminders = [
+            (r.get("content") or "").strip() for r in db.get_user_reminders(user_id)
+        ]
+    except Exception as exc:
+        logger.warning("Failed to load existing items for dedup %s: %s", user_id, exc)
 
     results = []
     for s in suggestions:
@@ -223,14 +229,16 @@ async def analyze(user_id: int) -> list[dict]:
             item_type = (s.get("type") or "note").lower()
             if item_type not in ("reminder", "note", "task"):
                 item_type = "note"
-            results.append({
-                "type": item_type,
-                "content": content,
-                "time": (s.get("time") or "").strip(),
-                "confidence": confidence,
-                "reason": (s.get("reason") or "").strip(),
-            })
-        except Exception:
+            results.append(
+                {
+                    "type": item_type,
+                    "content": content,
+                    "time": (s.get("time") or "").strip(),
+                    "confidence": confidence,
+                    "reason": (s.get("reason") or "").strip(),
+                }
+            )
+        except (TypeError, ValueError):
             continue
     return results[:2]
 
@@ -247,10 +255,14 @@ def _parse_time(time_text: str, user_id: int) -> tuple[str | None, str | None]:
         try:
             prefs = db.get_user_prefs(user_id)
             tz_name = (prefs or {}).get("timezone")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to load timezone for smart reminder %s: %s", user_id, exc
+            )
     try:
-        trigger_at, recurrence, parsed = reminders_service.parse_reminder_strict(time_text, tz_name=tz_name)
+        trigger_at, recurrence, parsed = reminders_service.parse_reminder_strict(
+            time_text, tz_name=tz_name
+        )
         if not parsed:
             return None, None
         return trigger_at.isoformat(), recurrence
@@ -290,7 +302,9 @@ def suggestion_keyboard(suggestions: list[dict], user_id: int) -> Any:
         else:
             label += "📝 Заметка"
         rows.append([InlineKeyboardButton(text=label, callback_data=data)])
-    rows.append([InlineKeyboardButton(text="❌ Не надо", callback_data="suggest:dismiss")])
+    rows.append(
+        [InlineKeyboardButton(text="❌ Не надо", callback_data="suggest:dismiss")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -355,9 +369,12 @@ async def create_note(user_id: int, content: str) -> str:
     db.add_note(user_id, content)
     try:
         from bot.routers import completion
+
         completion.refresh_system_prompt(user_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "Failed to refresh system prompt after note save %s: %s", user_id, exc
+        )
     return f"✅ Заметка сохранена:\n📝 {content}"
 
 

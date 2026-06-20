@@ -1,16 +1,20 @@
-from bot.ollama.api import validate_installation_with_configuration
-from bot.settings import OLLAMA_MODEL, DB_PATH
-from bot.ollama import generate_chat_completion, OllamaChatMessage
-from bot.ollama.dto import OllamaErrorChunk
-from bot.tasks_exec import execute_smart
-from bot.db import Database
-
 import asyncio
+import logging
+from datetime import datetime, timezone
+
+import aiohttp
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
-import aiohttp
-from datetime import datetime, timezone
+
+from bot.db import Database
+from bot.ollama import generate_chat_completion, OllamaChatMessage
+from bot.ollama.api import validate_installation_with_configuration
+from bot.ollama.dto import OllamaErrorChunk
+from bot.settings import DB_PATH, OLLAMA_MODEL
+from bot.tasks_exec import execute_smart
+
+logger = logging.getLogger(__name__)
 
 BASE_COMMANDS = [
     BotCommand(command="start", description="Приветствие и меню"),
@@ -136,7 +140,8 @@ async def main() -> None:
 
         try:
             dt = datetime.fromisoformat(trigger_at)
-        except Exception:
+        except ValueError as exc:
+            logger.warning("Failed to parse trigger_at %r: %s", trigger_at, exc)
             return None
         if not recurring:
             return None
@@ -261,8 +266,12 @@ async def main() -> None:
                         )
                         if (now - last_check).total_seconds() < interval:
                             continue
-                    except Exception:
-                        pass
+                    except ValueError as exc:
+                        logger.warning(
+                            "Failed to parse monitor last_check %r: %s",
+                            last_check_str,
+                            exc,
+                        )
 
                 mid = m["id"]
                 url = m.get("url", "")
