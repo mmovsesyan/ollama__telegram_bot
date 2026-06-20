@@ -28,6 +28,7 @@ from bot.settings import (
     NEWS_LANGUAGE,
     RSS_FEEDS,
     RSS_NEWS_HOURS,
+    RSS_TOPIC_FEEDS,
     SEARXNG_URL,
     WEB_SEARCH_PROVIDER,
 )
@@ -155,6 +156,26 @@ async def _fetch_feed(session: aiohttp.ClientSession, url: str, timeout: int = 1
     except Exception as e:
         logger.warning("[RSS] Failed to fetch %s: %s", url, e)
     return None
+
+
+def _feeds_for_topic(topic: str | None) -> list[str]:
+    """Return topic-tuned feeds if a topic hints at a known category.
+
+    Falls back to the full RSS_FEEDS list for generic or unknown topics.
+    """
+    if not topic:
+        return RSS_FEEDS
+    lowered = topic.lower().strip()
+    # Exact topic match first.
+    exact = RSS_TOPIC_FEEDS.get(lowered)
+    if exact:
+        return exact
+    # Multi-word topic: if any known keyword appears, union matching feeds.
+    matched: set[str] = set()
+    for keyword, urls in RSS_TOPIC_FEEDS.items():
+        if keyword in lowered:
+            matched.update(urls)
+    return list(matched) if matched else RSS_FEEDS
 
 
 async def _parse_feeds(
@@ -439,9 +460,10 @@ async def get_fresh_news(
     # Russian language, otherwise most web/RSS results get filtered out.
     require_russian = not _looks_like_english_query(topic)
 
-    if RSS_FEEDS:
+    feed_urls = _feeds_for_topic(topic)
+    if feed_urls:
         items = await _parse_feeds(
-            RSS_FEEDS, topic=topic, hours=hours, require_russian=require_russian
+            feed_urls, topic=topic, hours=hours, require_russian=require_russian
         )
         items = _filter_unshown(user_id, items, limit)
 

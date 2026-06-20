@@ -2176,7 +2176,7 @@ async def cmd_news_subscribe(message: Message, state: FSMContext):
     if len(parts) < 2:
         await message.answer(
             "📰 Какую категорию добавить?\n"
-            "tech, markets, ai, science, crypto, world",
+            "tech, markets, ai, science, crypto, world, games",
             reply_markup=cancel_keyboard,
         )
         return
@@ -2210,7 +2210,7 @@ async def cmd_news_unsubscribe(message: Message, state: FSMContext):
     if len(parts) < 2:
         await message.answer(
             "📰 Какую категорию убрать?\n"
-            "tech, markets, ai, science, crypto, world",
+            "tech, markets, ai, science, crypto, world, games",
             reply_markup=cancel_keyboard,
         )
         return

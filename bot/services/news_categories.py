@@ -21,6 +21,7 @@ CATEGORY_TOPICS = {
     "science": "наука космос исследования",
     "crypto": "криптовалюта биткоин блокчейн",
     "world": "мир политика события",
+    "games": "игры Steam консоли гейминг",
 }
 
 # Sources preferred over aggregator/no-name domains.
@@ -28,15 +29,25 @@ _SOURCE_QUALITY = {
     "habr.com": 3,
     "vc.ru": 3,
     "cnews.ru": 3,
+    "kommersant.ru": 3,
+    "vedomosti.ru": 3,
+    "bloomberg.com": 3,
+    "reuters.com": 3,
+    "ft.com": 3,
+    "wsj.com": 3,
     "tadviser.ru": 2,
     "iguides.ru": 2,
     "lenta.ru": 2,
     "rbc.ru": 2,
-    "bloomberg.com": 3,
-    "reuters.com": 3,
-    "ft.com": 3,
     "techcrunch.com": 2,
     "theverge.com": 2,
+    "igromania.ru": 2,
+    "stopgame.ru": 2,
+    "dtf.ru": 2,
+    "kanobu.ru": 2,
+    "bbc.co.uk": 2,
+    "bbc.com": 2,
+    "meduza.io": 2,
 }
 
 
@@ -134,6 +145,10 @@ def _normalize_category(cat: str) -> str:
         "крипта": "crypto",
         "биткоин": "crypto",
         "мир": "world",
+        "игры": "games",
+        "игровые": "games",
+        "steam": "games",
+        "гейминг": "games",
     }
     return aliases.get(cat, cat)
 

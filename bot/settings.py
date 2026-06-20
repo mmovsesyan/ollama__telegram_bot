@@ -67,6 +67,7 @@ COMPACTION_EVERY_N = int(os.getenv("COMPACTION_EVERY_N", default="8"))
 
 # News aggregator settings
 # Default RSS feeds for the /news command. Comma-separated list of feed URLs.
+# Curated mix of Russian tech/business/games and English top-tier sources.
 DEFAULT_RSS_FEEDS = os.getenv(
     "DEFAULT_RSS_FEEDS",
     default="https://habr.com/ru/rss/articles/top/,"
@@ -75,9 +76,50 @@ DEFAULT_RSS_FEEDS = os.getenv(
             "https://tadviser.ru/rss/news,"
             "https://www.iguides.ru/main/rss/mainarticles.xml,"
             "https://lenta.ru/rss/news/it,"
-            "https://www.rbc.ru/technology/?utm_source=topline_rbc",
+            "https://www.rbc.ru/technology/?utm_source=topline_rbc,"
+            "https://www.kommersant.ru/rss/regions/77.xml,"
+            "https://www.vedomosti.ru/rss/news,"
+            "https://www.bloomberg.com/feeds/markets/news.rss,"
+            "https://www.reuters.com/business/finance/rss/,"
+            "https://feeds.a.dj.com/rss/RSSMarketsMain.xml,"
+            "https://www.ft.com/rss/home/uk,"
+            "https://techcrunch.com/feed/,"
+            "https://www.theverge.com/rss/index.xml,"
+            "https://www.igromania.ru/rss/articles.xml,"
+            "https://stopgame.ru/rss/rss_news.xml,"
+            "https://dtf.ru/rss/all,"
+            "https://kanobu.ru/rss/news.rss,"
+            "https://www.bbc.co.uk/russian/rss.xml,"
+            "https://meduza.io/rss/all",
 )
 RSS_FEEDS = [u.strip() for u in DEFAULT_RSS_FEEDS.split(",") if u.strip()]
+
+# Topic-keywords → preferred feed URLs. Helps route a query to feeds that are
+# most likely to contain relevant news before falling back to generic web search.
+_RSS_TOPIC_FEEDS_RAW = os.getenv(
+    "RSS_TOPIC_FEEDS",
+    default="games:https://www.igromania.ru/rss/articles.xml,https://stopgame.ru/rss/rss_news.xml,https://dtf.ru/rss/all,https://kanobu.ru/rss/news.rss;"
+            "игры:https://www.igromania.ru/rss/articles.xml,https://stopgame.ru/rss/rss_news.xml,https://dtf.ru/rss/all,https://kanobu.ru/rss/news.rss;"
+            "tech:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/,https://www.theverge.com/rss/index.xml;"
+            "markets:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
+            "ai:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/;"
+            "world:https://www.bbc.co.uk/russian/rss.xml,https://meduza.io/rss/all,https://www.kommersant.ru/rss/regions/77.xml",
+)
+
+
+def _parse_topic_feeds(raw: str) -> dict[str, list[str]]:
+    mapping: dict[str, list[str]] = {}
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk or ":" not in chunk:
+            continue
+        topic, urls = chunk.split(":", 1)
+        topic = topic.strip().lower()
+        mapping[topic] = [u.strip() for u in urls.split(",") if u.strip()]
+    return mapping
+
+
+RSS_TOPIC_FEEDS: dict[str, list[str]] = _parse_topic_feeds(_RSS_TOPIC_FEEDS_RAW)
 
 # How far back to look for RSS news (hours)
 RSS_NEWS_HOURS = int(os.getenv("RSS_NEWS_HOURS", default="48"))
