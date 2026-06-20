@@ -27,13 +27,21 @@ from bot.services.rss_news import (
 class TestNewsItem:
     def test_to_dict_serializes_fields(self):
         published = datetime(2026, 6, 18, 12, 0, 0, tzinfo=timezone.utc)
-        item = NewsItem("Title", "https://x.com/a", "summary", published, "x.com")
+        item = NewsItem(
+            "Title",
+            "https://x.com/a",
+            "summary",
+            published,
+            "x.com",
+            "https://x.com/a.jpg",
+        )
         assert item.to_dict() == {
             "title": "Title",
             "url": "https://x.com/a",
             "summary": "summary",
             "published": "2026-06-18T12:00:00+00:00",
             "source": "x.com",
+            "image_url": "https://x.com/a.jpg",
         }
 
     def test_to_dict_none_published(self):
@@ -142,7 +150,7 @@ class TestFormatting:
             "habr.com",
         )
         text = _format_rss_item(item, 1)
-        assert "1. Заголовок" in text
+        assert "1. 💻 Заголовок" in text
         assert "habr.com" in text
         assert "18 июн" in text or "18 Jun" in text
         assert "Краткое" in text
@@ -151,10 +159,14 @@ class TestFormatting:
     def test_format_rss_item_without_date(self):
         item = NewsItem("Title", "https://x.com/a", "Snippet", None, "")
         text = _format_rss_item(item, 2)
-        assert "2. Title" in text
+        assert "2. 🌐 Title" in text
         assert "Snippet" in text
-        assert "🌐" not in text
         assert "🕐" not in text
+
+    def test_format_rss_item_uses_source_emoji(self):
+        item = NewsItem("Habr News", "https://habr.com/1", "Summary", None, "habr.com")
+        text = _format_rss_item(item, 1)
+        assert "1. 💻 Habr News" in text
 
     def test_render_news_empty(self):
         assert render_news([]) == ""
@@ -250,6 +262,38 @@ class TestParseFeeds:
         items = await _parse_feeds(["https://feed"], topic="apple", hours=48, limit=5)
         assert len(items) == 1
         assert items[0].title == "Apple news"
+
+    @pytest.mark.asyncio
+    async def test_parse_feeds_extracts_image_url(self, monkeypatch):
+        async def _fake_fetch(session, url, timeout=15):
+            return "<rss/>"
+
+        def _fake_parse(raw):
+            entries = [
+                SimpleNamespace(
+                    title="With image",
+                    link="https://a.com/1",
+                    summary="summary",
+                    published_parsed=datetime.now(timezone.utc).timetuple(),
+                    media_thumbnail=[{"url": "https://a.com/img.jpg"}],
+                ),
+                SimpleNamespace(
+                    title="Without image",
+                    link="https://a.com/2",
+                    summary="summary",
+                    published_parsed=datetime.now(timezone.utc).timetuple(),
+                ),
+            ]
+            return SimpleNamespace(entries=entries)
+
+        monkeypatch.setattr(rss_module, "_fetch_feed", _fake_fetch)
+        monkeypatch.setattr(rss_module.feedparser, "parse", _fake_parse)
+        monkeypatch.setattr(rss_module, "NEWS_LANGUAGE", "en")
+
+        items = await _parse_feeds(["https://feed"], limit=5)
+        assert len(items) == 2
+        assert items[0].image_url == "https://a.com/img.jpg"
+        assert items[1].image_url is None
 
     @pytest.mark.asyncio
     async def test_parse_feeds_deduplicates_links(self, monkeypatch):

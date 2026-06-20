@@ -2452,7 +2452,34 @@ async def _process_news(message: Message, topic: str | None = None):
     full_text = text + footer
     if len(full_text) > 4096:
         full_text = full_text[:4090] + "..."
-    await message.answer(full_text, reply_markup=command_keyboard)
+
+    # Send image previews as an album when available; Telegram albums are
+    # limited to 10 media and captions must fit 1024 chars. Keep it simple:
+    # first image with a compact summary, then the full text list.
+    image_items = [it for it in items if it.image_url][:4]
+    if image_items:
+        from aiogram.types import InputMediaPhoto
+
+        media_group: list[InputMediaPhoto] = []
+        for it in image_items:
+            caption = f"*{it.title}*\n\n{it.summary[:140]}"
+            if len(caption) > 1024:
+                caption = caption[:1020] + "..."
+            media_group.append(
+                InputMediaPhoto(
+                    media=it.image_url,
+                    caption=caption,
+                    parse_mode="Markdown",
+                )
+            )
+        try:
+            await message.answer_media_group(media_group)
+        except Exception as e:
+            logger.warning("[NEWS] failed to send media group: %s", e)
+
+    await message.answer(
+        full_text, reply_markup=command_keyboard, parse_mode="Markdown"
+    )
 
 
 async def _process_digest(message: Message):

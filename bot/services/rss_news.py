@@ -46,12 +46,14 @@ class NewsItem:
         summary: str = "",
         published: datetime | None = None,
         source: str = "",
+        image_url: str | None = None,
     ):
         self.title = title.strip()
         self.url = url.strip()
         self.summary = summary.strip()
         self.published = published
         self.source = source.strip()
+        self.image_url = image_url.strip() if image_url else None
 
     def to_dict(self) -> dict:
         return {
@@ -60,6 +62,7 @@ class NewsItem:
             "summary": self.summary,
             "published": self.published.isoformat() if self.published else None,
             "source": self.source,
+            "image_url": self.image_url,
         }
 
 
@@ -113,6 +116,37 @@ def _is_recent(published: datetime | None, hours: int) -> bool:
         return True
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     return published >= cutoff
+
+
+def _extract_image_url(entry: Any) -> str | None:
+    """Try common RSS/Atom image sources: media:thumbnail, media:content,
+    enclosure, og:image via description, image."""
+    try:
+        # feedparser exposes media:thumbnail as entry.media_thumbnail list
+        media = getattr(entry, "media_thumbnail", None) or []
+        if media:
+            return media[0].get("url") or media[0].get("href")
+    except Exception:
+        pass
+    try:
+        content = getattr(entry, "media_content", None) or []
+        for c in content:
+            if c.get("type", "").startswith("image/"):
+                return c.get("url") or c.get("href")
+    except Exception:
+        pass
+    try:
+        enc = getattr(entry, "enclosures", None) or []
+        for e in enc:
+            if (e.get("type") or "").startswith("image/"):
+                return e.get("href") or e.get("url")
+    except Exception:
+        pass
+    try:
+        return getattr(entry, "image", None) or None
+    except Exception:
+        pass
+    return None
 
 
 def _matches_topic(text: str, topic: str | None) -> bool:
@@ -240,7 +274,8 @@ async def _parse_feeds(
                 continue
 
             source = _extract_source_from_url(link)
-            items.append(NewsItem(title, link, summary, published, source))
+            image_url = _extract_image_url(entry)
+            items.append(NewsItem(title, link, summary, published, source, image_url))
 
     # Sort by recency, newest first, and cap early so downstream filters work on a bounded set.
     items.sort(
@@ -273,32 +308,65 @@ def _mark_shown(user_id: int, items: list[NewsItem]) -> None:
             pass
 
 
+def _source_emoji(source: str) -> str:
+    """Small visual source hint."""
+    if not source:
+        return "🌐"
+    domain = source.lower()
+    if any(d in domain for d in ("habr.com", "vc.ru")):
+        return "💻"
+    if any(d in domain for d in ("cnews.ru", "ixbt.com", "iguides.ru")):
+        return "📡"
+    if any(
+        d in domain
+        for d in (
+            "kommersant.ru",
+            "vedomosti.ru",
+            "rbc.ru",
+            "bloomberg.com",
+            "reuters.com",
+            "ft.com",
+            "wsj.com",
+        )
+    ):
+        return "📈"
+    if "meduza.io" in domain:
+        return "🗞"
+    if any(d in domain for d in ("bbc.com", "bbc.co.uk")):
+        return "📻"
+    if any(d in domain for d in ("igromania.ru", "stopgame.ru", "dtf.ru", "kanobu.ru")):
+        return "🎮"
+    if any(d in domain for d in ("techcrunch.com", "theverge.com")):
+        return "🔬"
+    return "🌐"
+
+
 def _format_rss_item(item: NewsItem, idx: int) -> str:
-    """Format a single news item as a clean, copy-paste friendly block.
+    """Format a single news item as a compact rich card.
 
     Layout:
-    {idx}. {title}
-    🌐 {source} · 🕐 {date}
+    {idx}. {emoji} {title}
+    🕐 {date} · 🌐 {source}
     {snippet}
     🔗 {url}
     """
-    lines: list[str] = [f"{idx}. {item.title}"]
+    lines: list[str] = [f"{idx}. {_source_emoji(item.source)} {item.title}"]
 
     meta_parts: list[str] = []
-    if item.source:
-        meta_parts.append(f"🌐 {item.source}")
     if item.published:
         try:
             date_str = item.published.strftime("%d %b · %H:%M")
         except Exception:
             date_str = str(item.published)[:16]
         meta_parts.append(f"🕐 {date_str}")
+    if item.source:
+        meta_parts.append(f"🌐 {item.source}")
     if meta_parts:
         lines.append("   " + " · ".join(meta_parts))
 
     if item.summary:
-        snippet = item.summary[:220]
-        if len(item.summary) > 220:
+        snippet = item.summary[:180]
+        if len(item.summary) > 180:
             snippet = snippet.rsplit(" ", 1)[0] + "..."
         lines.append(f"   {snippet}")
 
@@ -312,7 +380,7 @@ def render_news(items: list[NewsItem], header: str = "📰 Новости") -> s
     """Render a list of news items into a clean Telegram message."""
     if not items:
         return ""
-    blocks: list[str] = [header, ""]
+    blocks: list[str] = [f"*{header}*", ""]
     for i, item in enumerate(items, 1):
         blocks.append(_format_rss_item(item, i))
         blocks.append("")
