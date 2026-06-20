@@ -36,16 +36,19 @@ class _FakeDb:
         }
         return doc_id
 
-    def get_document(self, doc_id):
-        return self._docs.get(doc_id)
+    def get_document(self, doc_id, user_id=None):
+        doc = self._docs.get(doc_id)
+        if user_id is not None and doc and doc.get("user_id") != user_id:
+            return None
+        return doc
 
     def get_documents(self, user_id):
         return [d for d in self._docs.values() if d["user_id"] == user_id]
 
-    def get_document(self, doc_id):
-        return self._docs.get(doc_id)
-
-    def delete_document(self, doc_id):
+    def delete_document(self, doc_id, user_id=None):
+        doc = self._docs.get(doc_id)
+        if user_id is not None and doc and doc.get("user_id") != user_id:
+            return False
         self._chunks = [c for c in self._chunks if c.get("document_id") != doc_id]
         return self._docs.pop(doc_id, None) is not None
 
@@ -275,3 +278,30 @@ async def test_integration_with_real_db(tmp_path):
     results = real_db.search_document_chunks(42, "revenue grew")
     assert len(results) > 0
     assert any("revenue" in r["chunk"].lower() for r in results)
+
+
+def test_delete_document_enforces_ownership(tmp_path):
+    """Service-level delete must not remove another user's document."""
+    db_path = tmp_path / "isolation.db"
+    real_db = Database(str(db_path))
+    documents_module.db = real_db
+
+    path_a = tmp_path / "a.txt"
+    path_a.write_text("a", encoding="utf-8")
+    doc_id_a = real_db.add_document(
+        user_id=1,
+        telegram_file_id="f1",
+        local_path=str(path_a),
+        filename="a.txt",
+        mime_type="text/plain",
+        extracted_text="a",
+        summary=None,
+    )
+
+    assert documents_module.delete_document(doc_id_a, user_id=2) is False
+    assert path_a.exists()
+    assert real_db.get_document(doc_id_a) is not None
+
+    assert documents_module.delete_document(doc_id_a, user_id=1) is True
+    assert not path_a.exists()
+    assert real_db.get_document(doc_id_a) is None

@@ -2285,12 +2285,12 @@ async def cmd_forget_doc(message: Message, state: FSMContext):
         return
 
     from bot.services import documents as documents_service
-    doc = documents_service.get_document(doc_id)
-    if not doc or doc.get("user_id") != message.from_user.id:
+    doc = documents_service.get_document(doc_id, user_id=message.from_user.id)
+    if not doc:
         await message.answer("⚠️ Документ не найден или нет доступа.", reply_markup=command_keyboard)
         return
 
-    if documents_service.delete_document(doc_id):
+    if documents_service.delete_document(doc_id, user_id=message.from_user.id):
         await message.answer(
             f"✅ Документ *{doc['filename']}* удалён.",
             reply_markup=command_keyboard,
@@ -2431,12 +2431,12 @@ async def cmd_forget_image(message: Message, state: FSMContext):
         return
 
     from bot.services import images as images_service
-    img = images_service.get_image(image_id)
-    if not img or img.get("user_id") != message.from_user.id:
+    img = images_service.get_image(image_id, user_id=message.from_user.id)
+    if not img:
         await message.answer("⚠️ Фото не найдено или нет доступа.", reply_markup=command_keyboard)
         return
 
-    if images_service.delete_image(image_id):
+    if images_service.delete_image(image_id, user_id=message.from_user.id):
         await message.answer(
             f"✅ Фото ID {image_id} удалёно.",
             reply_markup=command_keyboard,

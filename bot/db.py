@@ -775,16 +775,28 @@ class Database:
             )
             return [dict(r) for r in cursor.fetchall()]
 
-    def get_document(self, doc_id: int) -> dict | None:
+    def get_document(self, doc_id: int, user_id: int | None = None) -> dict | None:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+            if user_id is not None:
+                cursor = conn.execute(
+                    "SELECT * FROM documents WHERE id = ? AND user_id = ?",
+                    (doc_id, user_id),
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def delete_document(self, doc_id: int) -> bool:
+    def delete_document(self, doc_id: int, user_id: int | None = None) -> bool:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            if user_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM documents WHERE id = ? AND user_id = ?",
+                    (doc_id, user_id),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
             conn.execute("DELETE FROM document_chunks_fts WHERE document_id = ?", (doc_id,))
             conn.commit()
             return cursor.rowcount > 0
@@ -843,38 +855,50 @@ class Database:
             )
             return [dict(r) for r in cursor.fetchall()]
 
-    def get_image(self, image_id: int) -> dict | None:
+    def get_image(self, image_id: int, user_id: int | None = None) -> dict | None:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM images WHERE id = ?", (image_id,))
+            if user_id is not None:
+                cursor = conn.execute(
+                    "SELECT * FROM images WHERE id = ? AND user_id = ?",
+                    (image_id, user_id),
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM images WHERE id = ?", (image_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def delete_image(self, image_id: int) -> bool:
+    def delete_image(self, image_id: int, user_id: int | None = None) -> bool:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
+            if user_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM images WHERE id = ? AND user_id = ?",
+                    (image_id, user_id),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
             conn.commit()
             return cursor.rowcount > 0
 
-    def get_old_documents(self, before_utc_iso: str) -> list[dict]:
-        """Return documents with created_at older than the cutoff."""
+    def get_old_documents(self, user_id: int, before_utc_iso: str) -> list[dict]:
+        """Return a user's documents with created_at older than the cutoff."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM documents WHERE created_at < ?",
-                (before_utc_iso,),
+                "SELECT * FROM documents WHERE user_id = ? AND created_at < ?",
+                (user_id, before_utc_iso),
             )
             return [dict(r) for r in cursor.fetchall()]
 
-    def cleanup_old_documents(self, before_utc_iso: str) -> int:
-        """Delete documents older than cutoff and their FTS chunks.
+    def cleanup_old_documents(self, user_id: int, before_utc_iso: str) -> int:
+        """Delete a user's documents older than cutoff and their FTS chunks.
 
         Returns the number of rows removed. Files are removed by the caller
         so path logging survives the DB transaction."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "DELETE FROM documents WHERE created_at < ?",
-                (before_utc_iso,),
+                "DELETE FROM documents WHERE user_id = ? AND created_at < ?",
+                (user_id, before_utc_iso),
             )
             conn.execute(
                 "DELETE FROM document_chunks_fts WHERE document_id NOT IN (SELECT id FROM documents)",
@@ -882,22 +906,22 @@ class Database:
             conn.commit()
             return cursor.rowcount
 
-    def get_old_images(self, before_utc_iso: str) -> list[dict]:
-        """Return images with created_at older than the cutoff."""
+    def get_old_images(self, user_id: int, before_utc_iso: str) -> list[dict]:
+        """Return a user's images with created_at older than the cutoff."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM images WHERE created_at < ?",
-                (before_utc_iso,),
+                "SELECT * FROM images WHERE user_id = ? AND created_at < ?",
+                (user_id, before_utc_iso),
             )
             return [dict(r) for r in cursor.fetchall()]
 
-    def cleanup_old_images(self, before_utc_iso: str) -> int:
-        """Delete images older than cutoff. Returns row count."""
+    def cleanup_old_images(self, user_id: int, before_utc_iso: str) -> int:
+        """Delete a user's images older than cutoff. Returns row count."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "DELETE FROM images WHERE created_at < ?",
-                (before_utc_iso,),
+                "DELETE FROM images WHERE user_id = ? AND created_at < ?",
+                (user_id, before_utc_iso),
             )
             conn.commit()
             return cursor.rowcount

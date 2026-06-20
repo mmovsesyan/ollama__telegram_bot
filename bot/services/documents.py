@@ -336,16 +336,16 @@ def get_user_documents(user_id: int) -> list[dict]:
     return db.get_documents(user_id)
 
 
-def get_document(doc_id: int) -> dict | None:
+def get_document(doc_id: int, user_id: int | None = None) -> dict | None:
     if db is None:
         return None
-    return db.get_document(doc_id)
+    return db.get_document(doc_id, user_id=user_id)
 
 
-def delete_document(doc_id: int) -> bool:
+def delete_document(doc_id: int, user_id: int | None = None) -> bool:
     if db is None:
         return False
-    doc = db.get_document(doc_id)
+    doc = db.get_document(doc_id, user_id=user_id)
     if not doc:
         return False
     if doc.get("local_path") and Path(doc["local_path"]).exists():
@@ -353,7 +353,7 @@ def delete_document(doc_id: int) -> bool:
             os.unlink(doc["local_path"])
         except Exception as e:
             logger.warning("[DOCS] failed to remove file %s: %s", doc["local_path"], e)
-    return db.delete_document(doc_id)
+    return db.delete_document(doc_id, user_id=user_id)
 
 
 def search_document_chunks(user_id: int, query: str, limit: int = 5) -> list[dict]:

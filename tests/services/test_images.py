@@ -197,3 +197,28 @@ def test_delete_image_removes_file(tmp_path):
 def test_delete_image_unknown_returns_false():
     images_module.db = Database(str(tempfile.mktemp(suffix=".db")))
     assert not images_module.delete_image(999)
+
+
+def test_delete_image_enforces_ownership(tmp_path):
+    db_path = tmp_path / "isolation.db"
+    real_db = Database(str(db_path))
+    images_module.db = real_db
+
+    path_a = tmp_path / "a.jpg"
+    path_a.write_bytes(_make_jpeg_bytes())
+    image_id_a = real_db.add_image(
+        user_id=1,
+        telegram_file_id="p1",
+        local_path=str(path_a),
+        caption=None,
+        description="a",
+        ocr_text=None,
+    )
+
+    assert images_module.delete_image(image_id_a, user_id=2) is False
+    assert path_a.exists()
+    assert real_db.get_image(image_id_a) is not None
+
+    assert images_module.delete_image(image_id_a, user_id=1) is True
+    assert not path_a.exists()
+    assert real_db.get_image(image_id_a) is None

@@ -157,16 +157,16 @@ def get_user_images(user_id: int) -> list[dict]:
     return db.get_images(user_id)
 
 
-def get_image(image_id: int) -> dict | None:
+def get_image(image_id: int, user_id: int | None = None) -> dict | None:
     if db is None:
         return None
-    return db.get_image(image_id)
+    return db.get_image(image_id, user_id=user_id)
 
 
-def delete_image(image_id: int) -> bool:
+def delete_image(image_id: int, user_id: int | None = None) -> bool:
     if db is None:
         return False
-    image = db.get_image(image_id)
+    image = db.get_image(image_id, user_id=user_id)
     if not image:
         return False
     if image.get("local_path") and Path(image["local_path"]).exists():
@@ -174,7 +174,7 @@ def delete_image(image_id: int) -> bool:
             os.unlink(image["local_path"])
         except Exception as e:
             logger.warning("[IMAGES] failed to remove file %s: %s", image["local_path"], e)
-    return db.delete_image(image_id)
+    return db.delete_image(image_id, user_id=user_id)
 
 
 async def answer_question(user_id: int, image_id: int, question: str, model: str | None = None) -> str:

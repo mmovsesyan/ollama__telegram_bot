@@ -55,23 +55,19 @@ def cleanup_user_retention(user_id: int) -> tuple[int, int]:
 
     removed_docs = 0
     try:
-        old_docs = db.get_old_documents(cutoff)
+        old_docs = db.get_old_documents(user_id, cutoff)
         for doc in old_docs:
-            if doc.get("user_id") != user_id:
-                continue
             _unlink_safely(doc.get("local_path"))
-        removed_docs = db.cleanup_old_documents(cutoff)
+        removed_docs = db.cleanup_old_documents(user_id, cutoff)
     except Exception as e:
         logger.warning("[RETENTION] document cleanup failed for %s: %s", user_id, e)
 
     removed_images = 0
     try:
-        old_images = db.get_old_images(cutoff)
+        old_images = db.get_old_images(user_id, cutoff)
         for img in old_images:
-            if img.get("user_id") != user_id:
-                continue
             _unlink_safely(img.get("local_path"))
-        removed_images = db.cleanup_old_images(cutoff)
+        removed_images = db.cleanup_old_images(user_id, cutoff)
     except Exception as e:
         logger.warning("[RETENTION] image cleanup failed for %s: %s", user_id, e)
 

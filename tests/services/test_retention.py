@@ -108,6 +108,7 @@ def test_cleanup_user_retention_respects_keep_forever(fresh_db, tmp_path):
     assert old_file.exists()
 
 
+
 def test_cleanup_user_retention_deletes_old_image(fresh_db, tmp_path):
     fresh_db.set_user_prefs(4, retention_days=30)
 
@@ -133,3 +134,82 @@ def test_cleanup_user_retention_deletes_old_image(fresh_db, tmp_path):
     assert images == 1
     assert not old_image.exists()
     assert fresh_db.get_images(4) == []
+
+
+def test_cleanup_user_retention_does_not_touch_other_users(fresh_db, tmp_path):
+    """Critical: user A's cleanup must not delete user B's documents/images."""
+    fresh_db.set_user_prefs(10, retention_days=30)
+    fresh_db.set_user_prefs(20, retention_days=30)
+
+    user_a_doc = tmp_path / "a.txt"
+    user_a_doc.write_text("a")
+    fresh_db.add_document(
+        user_id=10,
+        telegram_file_id="d10",
+        local_path=str(user_a_doc),
+        filename="a.txt",
+        mime_type="text/plain",
+        extracted_text="a",
+        summary=None,
+    )
+    user_b_doc = tmp_path / "b.txt"
+    user_b_doc.write_text("b")
+    fresh_db.add_document(
+        user_id=20,
+        telegram_file_id="d20",
+        local_path=str(user_b_doc),
+        filename="b.txt",
+        mime_type="text/plain",
+        extracted_text="b",
+        summary=None,
+    )
+
+    user_a_img = tmp_path / "a.jpg"
+    user_a_img.write_bytes(b"a")
+    fresh_db.add_image(
+        user_id=10,
+        telegram_file_id="i10",
+        local_path=str(user_a_img),
+        caption=None,
+        description=None,
+        ocr_text=None,
+    )
+    user_b_img = tmp_path / "b.jpg"
+    user_b_img.write_bytes(b"b")
+    fresh_db.add_image(
+        user_id=20,
+        telegram_file_id="i20",
+        local_path=str(user_b_img),
+        caption=None,
+        description=None,
+        ocr_text=None,
+    )
+
+    with sqlite3.connect(fresh_db.db_path) as conn:
+        conn.execute(
+            "UPDATE documents SET created_at = ? WHERE user_id = 10",
+            (_utc_days_ago(31),),
+        )
+        conn.execute(
+            "UPDATE documents SET created_at = ? WHERE user_id = 20",
+            (_utc_days_ago(31),),
+        )
+        conn.execute(
+            "UPDATE images SET created_at = ? WHERE user_id = 10",
+            (_utc_days_ago(31),),
+        )
+        conn.execute(
+            "UPDATE images SET created_at = ? WHERE user_id = 20",
+            (_utc_days_ago(31),),
+        )
+        conn.commit()
+
+    docs, images = retention_module.cleanup_user_retention(10)
+    assert docs == 1
+    assert images == 1
+    assert not user_a_doc.exists()
+    assert not user_a_img.exists()
+    assert user_b_doc.exists()
+    assert user_b_img.exists()
+    assert len(fresh_db.get_documents(20)) == 1
+    assert len(fresh_db.get_images(20)) == 1
