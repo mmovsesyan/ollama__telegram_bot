@@ -6,7 +6,7 @@ import pytest
 
 from bot.db import Database
 from bot.routers import cron as cron_module
-from bot.security import is_admin, is_allowed
+from bot.security import is_admin
 
 
 def _message(user_id: int = 42, text: str = "", bot=None):
@@ -42,6 +42,7 @@ def fresh_db(tmp_path):
     db = Database(str(db_path))
     cron_module.db = db
     import bot.security as sec_module
+
     sec_module.db = db
     yield db
     cron_module.db = None
@@ -51,8 +52,10 @@ def fresh_db(tmp_path):
 @pytest.mark.asyncio
 async def test_pending_user_start_sends_request(fresh_db):
     from bot.routers import start as start_module
+
     start_module.db = fresh_db
     import bot.security as sec_module
+
     sec_module.db = fresh_db
 
     try:

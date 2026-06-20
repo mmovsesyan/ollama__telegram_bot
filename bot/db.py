@@ -2,7 +2,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
-from bot.settings import ALLOWED_CHAT_IDS as _ALLOWED_CHAT_IDS
 
 class Database:
     def __init__(self, db_path: str):
@@ -19,18 +18,23 @@ class Database:
     def _read_allowed_chat_ids(self) -> str:
         """Read env allow-list fresh via module attribute, not a local binding."""
         import bot.settings as settings_module
+
         return getattr(settings_module, "ALLOWED_CHAT_IDS", "") or ""
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             # Migrate reminders table: add action column if missing
             try:
-                conn.execute("ALTER TABLE reminders ADD COLUMN action TEXT DEFAULT 'notify'")
+                conn.execute(
+                    "ALTER TABLE reminders ADD COLUMN action TEXT DEFAULT 'notify'"
+                )
             except sqlite3.OperationalError:
                 pass
             # Migrate monitors table: persist alert state across restarts
             try:
-                conn.execute("ALTER TABLE monitors ADD COLUMN alerted INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE monitors ADD COLUMN alerted INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
             # Migrate user_prefs: add display name and timezone for localization
@@ -39,7 +43,9 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN timezone TEXT DEFAULT 'UTC'")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN timezone TEXT DEFAULT 'UTC'"
+                )
             except sqlite3.OperationalError:
                 pass
             # Migrate memories: optional LLM-compressed summary for long entries.
@@ -49,28 +55,40 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'manual'")
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'manual'"
+                )
             except sqlite3.OperationalError:
                 pass
             # Migrate user_prefs: proactive/morning-briefing settings.
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 1")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 1"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_time TEXT DEFAULT '08:00'")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN briefing_time TEXT DEFAULT '08:00'"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN proactive_enabled INTEGER DEFAULT 1")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN proactive_enabled INTEGER DEFAULT 1"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN news_categories TEXT DEFAULT 'tech,markets,ai'")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN news_categories TEXT DEFAULT 'tech,markets,ai'"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN voice_output_enabled INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN voice_output_enabled INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
@@ -78,19 +96,27 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN last_briefing_date TEXT")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN last_briefing_date TEXT"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN smart_reminders_enabled INTEGER DEFAULT 1")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN smart_reminders_enabled INTEGER DEFAULT 1"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_enabled INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN digest_enabled INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_time TEXT DEFAULT '20:00'")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN digest_time TEXT DEFAULT '20:00'"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
@@ -98,7 +124,9 @@ class Database:
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE user_prefs ADD COLUMN retention_days INTEGER DEFAULT 90")
+                conn.execute(
+                    "ALTER TABLE user_prefs ADD COLUMN retention_days INTEGER DEFAULT 90"
+                )
             except sqlite3.OperationalError:
                 pass
             # New users/access-control table.
@@ -310,18 +338,20 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "SELECT id FROM sessions WHERE user_id = ? AND active = 1 ORDER BY updated_at DESC LIMIT 1",
-                (user_id,)
+                (user_id,),
             )
             row = cursor.fetchone()
             if row:
                 session_id = row[0]
-                conn.execute("UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
+                conn.execute(
+                    "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (session_id,),
+                )
                 conn.commit()
                 return session_id
 
             cursor = conn.execute(
-                "INSERT INTO sessions (user_id, model) VALUES (?, ?)",
-                (user_id, model)
+                "INSERT INTO sessions (user_id, model) VALUES (?, ?)", (user_id, model)
             )
             conn.commit()
             return cursor.lastrowid
@@ -330,7 +360,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE sessions SET active = 0, summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (summary, session_id)
+                (summary, session_id),
             )
             conn.commit()
 
@@ -339,7 +369,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT id FROM sessions WHERE user_id = ? AND active = 1 ORDER BY updated_at DESC LIMIT 1",
-                (user_id,)
+                (user_id,),
             )
             row = cursor.fetchone()
             if not row:
@@ -347,23 +377,34 @@ class Database:
             session_id = row[0]
             cursor = conn.execute(
                 "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
-                (session_id, limit)
+                (session_id, limit),
             )
             rows = cursor.fetchall()
-            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+            return [
+                {"role": r["role"], "content": r["content"]} for r in reversed(rows)
+            ]
 
-    def save_message(self, user_id: int, session_id: int, role: str, content: str, model: Optional[str] = None):
+    def save_message(
+        self,
+        user_id: int,
+        session_id: int,
+        role: str,
+        content: str,
+        model: Optional[str] = None,
+    ):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO messages (user_id, session_id, role, content, model) VALUES (?, ?, ?, ?, ?)",
-                (user_id, session_id, role, content, model)
+                (user_id, session_id, role, content, model),
             )
             conn.commit()
 
     def get_user_prefs(self, user_id: int) -> Optional[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM user_prefs WHERE user_id = ?", (user_id,))
+            cursor = conn.execute(
+                "SELECT * FROM user_prefs WHERE user_id = ?", (user_id,)
+            )
             row = cursor.fetchone()
             if row:
                 return dict(row)
@@ -371,7 +412,9 @@ class Database:
 
     def set_user_prefs(self, user_id: int, **kwargs):
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ?", (user_id,))
+            cursor = conn.execute(
+                "SELECT 1 FROM user_prefs WHERE user_id = ?", (user_id,)
+            )
             if cursor.fetchone():
                 fields = []
                 values = []
@@ -381,34 +424,41 @@ class Database:
                 values.append(user_id)
                 conn.execute(
                     f"UPDATE user_prefs SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-                    values
+                    values,
                 )
             else:
                 fields = list(kwargs.keys())
-                placeholders = ', '.join(['?' for _ in fields])
+                placeholders = ", ".join(["?" for _ in fields])
                 conn.execute(
                     f"INSERT INTO user_prefs (user_id, {', '.join(fields)}) VALUES (?, {placeholders})",
-                    [user_id] + list(kwargs.values())
+                    [user_id] + list(kwargs.values()),
                 )
             conn.commit()
 
     def add_note(self, user_id: int, note: str):
         prefs = self.get_user_prefs(user_id) or {}
-        notes = prefs.get('notes', '') or ''
+        notes = prefs.get("notes", "") or ""
         notes = notes + f"\n- {note}" if notes else f"- {note}"
         self.set_user_prefs(user_id, notes=notes)
 
     def get_notes(self, user_id: int) -> str:
         prefs = self.get_user_prefs(user_id)
-        if prefs and prefs.get('notes'):
-            return prefs['notes']
+        if prefs and prefs.get("notes"):
+            return prefs["notes"]
         return ""
 
-    def add_reminder(self, user_id: int, content: str, trigger_at: Optional[str] = None, recurring: Optional[str] = None, action: Optional[str] = None) -> int:
+    def add_reminder(
+        self,
+        user_id: int,
+        content: str,
+        trigger_at: Optional[str] = None,
+        recurring: Optional[str] = None,
+        action: Optional[str] = None,
+    ) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "INSERT INTO reminders (user_id, content, trigger_at, recurring, action) VALUES (?, ?, ?, ?, ?)",
-                (user_id, content, trigger_at, recurring, action)
+                (user_id, content, trigger_at, recurring, action),
             )
             conn.commit()
             return cursor.lastrowid
@@ -418,7 +468,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM reminders WHERE enabled = 1 AND trigger_at IS NOT NULL AND trigger_at <= ? ORDER BY trigger_at",
-                (before,)
+                (before,),
             )
             return [dict(r) for r in cursor.fetchall()]
 
@@ -427,7 +477,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM reminders WHERE user_id = ? AND enabled = 1 ORDER BY trigger_at",
-                (user_id,)
+                (user_id,),
             )
             return [dict(r) for r in cursor.fetchall()]
 
@@ -435,7 +485,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE reminders SET trigger_at = ? WHERE id = ?",
-                (new_trigger_at, reminder_id)
+                (new_trigger_at, reminder_id),
             )
             conn.commit()
 
@@ -447,7 +497,9 @@ class Database:
             )
             conn.commit()
 
-    def update_reminder_schedule(self, reminder_id: int, trigger_at: str, recurring: str | None):
+    def update_reminder_schedule(
+        self, reminder_id: int, trigger_at: str, recurring: str | None
+    ):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE reminders SET trigger_at = ?, recurring = ? WHERE id = ?",
@@ -458,7 +510,9 @@ class Database:
     def get_reminder(self, reminder_id: int) -> Optional[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
+            cursor = conn.execute(
+                "SELECT * FROM reminders WHERE id = ?", (reminder_id,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -474,11 +528,19 @@ class Database:
         """Alias for disable_reminder; new callers should prefer this name."""
         self.disable_reminder(reminder_id)
 
-    def add_monitor(self, user_id: int, name: str, url: str, method: str = 'GET', expected_status: int = 200, interval: int = 300) -> int:
+    def add_monitor(
+        self,
+        user_id: int,
+        name: str,
+        url: str,
+        method: str = "GET",
+        expected_status: int = 200,
+        interval: int = 300,
+    ) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "INSERT INTO monitors (user_id, name, url, method, expected_status, check_interval) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, name, url, method, expected_status, interval)
+                (user_id, name, url, method, expected_status, interval),
             )
             conn.commit()
             return cursor.lastrowid
@@ -486,7 +548,9 @@ class Database:
     def get_monitors(self, user_id: int) -> list[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM monitors WHERE user_id = ? AND enabled = 1", (user_id,))
+            cursor = conn.execute(
+                "SELECT * FROM monitors WHERE user_id = ? AND enabled = 1", (user_id,)
+            )
             return [dict(r) for r in cursor.fetchall()]
 
     def get_all_active_monitors(self) -> list[dict]:
@@ -499,7 +563,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE monitors SET last_check = CURRENT_TIMESTAMP, last_status = ? WHERE id = ?",
-                (last_status, monitor_id)
+                (last_status, monitor_id),
             )
             conn.commit()
 
@@ -517,7 +581,9 @@ class Database:
 
     def is_monitor_alerted(self, monitor_id: int) -> bool:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT alerted FROM monitors WHERE id = ?", (monitor_id,))
+            cursor = conn.execute(
+                "SELECT alerted FROM monitors WHERE id = ?", (monitor_id,)
+            )
             row = cursor.fetchone()
             return bool(row[0]) if row and row[0] is not None else False
 
@@ -530,7 +596,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "INSERT INTO summaries (session_id, message_count, summary) VALUES (?, ?, ?)",
-                (session_id, message_count, summary)
+                (session_id, message_count, summary),
             )
             conn.commit()
             return cursor.lastrowid
@@ -540,7 +606,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM summaries WHERE session_id = ? ORDER BY message_count DESC LIMIT 1",
-                (session_id,)
+                (session_id,),
             )
             row = cursor.fetchone()
             if row:
@@ -552,7 +618,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM summaries WHERE session_id = ? ORDER BY message_count ASC",
-                (session_id,)
+                (session_id,),
             )
             return [dict(r) for r in cursor.fetchall()]
 
@@ -599,7 +665,12 @@ class Database:
         if not query or not query.strip():
             return []
         # Strip punctuation that breaks FTS5 query syntax.
-        cleaned = query.replace('"', " ").replace("'", " ").replace("(", " ").replace(")", " ")
+        cleaned = (
+            query.replace('"', " ")
+            .replace("'", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+        )
         tokens = [tok.strip() for tok in cleaned.split() if tok.strip()]
         if not tokens:
             return []
@@ -628,7 +699,9 @@ class Database:
         Returns the number of rows backfilled."""
         with sqlite3.connect(self.db_path) as conn:
             try:
-                fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+                fts_count = conn.execute(
+                    "SELECT COUNT(*) FROM memories_fts"
+                ).fetchone()[0]
                 mem_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
                 if fts_count >= mem_count:
                     return 0
@@ -647,12 +720,12 @@ class Database:
             if category:
                 cursor = conn.execute(
                     "SELECT * FROM memories WHERE user_id = ? AND category = ? ORDER BY created_at DESC",
-                    (user_id, category)
+                    (user_id, category),
                 )
             else:
                 cursor = conn.execute(
                     "SELECT * FROM memories WHERE user_id = ? ORDER BY created_at DESC",
-                    (user_id,)
+                    (user_id,),
                 )
             return [dict(r) for r in cursor.fetchall()]
 
@@ -665,7 +738,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "SELECT 1 FROM shown_news WHERE user_id = ? AND url = ? LIMIT 1",
-                (user_id, url)
+                (user_id, url),
             )
             return cursor.fetchone() is not None
 
@@ -673,7 +746,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO shown_news (user_id, url, title) VALUES (?, ?, ?)",
-                (user_id, url, title)
+                (user_id, url, title),
             )
             conn.commit()
 
@@ -682,7 +755,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "DELETE FROM shown_news WHERE shown_at < datetime('now', ?)",
-                (f"-{days} days",)
+                (f"-{days} days",),
             )
             conn.commit()
             return cursor.rowcount
@@ -704,7 +777,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE user_prefs SET last_briefing_date = ? WHERE user_id = ?",
-                (date_str, user_id)
+                (date_str, user_id),
             )
             conn.commit()
 
@@ -724,7 +797,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE user_prefs SET last_digest_date = ? WHERE user_id = ?",
-                (date_str, user_id)
+                (date_str, user_id),
             )
             conn.commit()
 
@@ -761,7 +834,15 @@ class Database:
                 (user_id, telegram_file_id, local_path, filename, mime_type, extracted_text, summary)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, telegram_file_id, local_path, filename, mime_type, extracted_text, summary),
+                (
+                    user_id,
+                    telegram_file_id,
+                    local_path,
+                    filename,
+                    mime_type,
+                    extracted_text,
+                    summary,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -797,7 +878,9 @@ class Database:
                 )
             else:
                 cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-            conn.execute("DELETE FROM document_chunks_fts WHERE document_id = ?", (doc_id,))
+            conn.execute(
+                "DELETE FROM document_chunks_fts WHERE document_id = ?", (doc_id,)
+            )
             conn.commit()
             return cursor.rowcount > 0
 
@@ -810,7 +893,9 @@ class Database:
                 )
             conn.commit()
 
-    def search_document_chunks(self, user_id: int, query: str, limit: int = 5) -> list[dict]:
+    def search_document_chunks(
+        self, user_id: int, query: str, limit: int = 5
+    ) -> list[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
@@ -968,7 +1053,9 @@ class Database:
                         values,
                     )
                     conn.commit()
-                    cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                    cursor = conn.execute(
+                        "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                    )
                     record = dict(cursor.fetchone())
                 return record
 

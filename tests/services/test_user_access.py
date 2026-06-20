@@ -1,7 +1,6 @@
 """Tests for user access-control DB layer and security helpers."""
 
 import sqlite3
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,6 +14,7 @@ def fresh_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     # Make sure security module uses this test DB.
     import bot.security as sec_module
+
     sec_module.db = db
     yield db
     sec_module.db = None
@@ -72,6 +72,7 @@ class TestUserAccessDb:
         # Module-level import is cached; patch the attribute on the imported
         # module object so _read_allowed_chat_ids sees the test value.
         import bot.settings as settings_module
+
         monkeypatch.setattr(settings_module, "ALLOWED_CHAT_IDS", "111,222")
         db_path = tmp_path / "bootstrap.db"
         db = Database(str(db_path))
@@ -147,20 +148,28 @@ class TestCascadeDeletion:
         other_img.write_bytes(b"otherjpg")
 
         target_doc_id = fresh_db.add_document(
-            target, "f_target", str(target_doc), "target.txt", "text/plain", "target doc", None
+            target,
+            "f_target",
+            str(target_doc),
+            "target.txt",
+            "text/plain",
+            "target doc",
+            None,
         )
         fresh_db.add_document_chunks(target_doc_id, target, ["target chunk"])
-        target_img_id = fresh_db.add_image(
-            target, "p_target", str(target_img), None, None, None
-        )
+        fresh_db.add_image(target, "p_target", str(target_img), None, None, None)
 
         other_doc_id = fresh_db.add_document(
-            other, "f_other", str(other_doc), "other.txt", "text/plain", "other doc", None
+            other,
+            "f_other",
+            str(other_doc),
+            "other.txt",
+            "text/plain",
+            "other doc",
+            None,
         )
         fresh_db.add_document_chunks(other_doc_id, other, ["other chunk"])
-        other_img_id = fresh_db.add_image(
-            other, "p_other", str(other_img), None, None, None
-        )
+        fresh_db.add_image(other, "p_other", str(other_img), None, None, None)
 
         assert fresh_db.delete_user(target) is True
 
@@ -190,7 +199,9 @@ class TestCascadeDeletion:
             target_summary_count = conn.execute(
                 "SELECT COUNT(*) FROM summaries WHERE session_id = ?", (target_session,)
             ).fetchone()[0]
-            assert target_summary_count == 0, "summaries still has rows for target session"
+            assert (
+                target_summary_count == 0
+            ), "summaries still has rows for target session"
 
             # Other user's data must remain
             for table in user_tables:
@@ -206,7 +217,8 @@ class TestCascadeDeletion:
             assert other_summary_count == 1, "other summary was removed"
 
             other_chunk_count = conn.execute(
-                "SELECT COUNT(*) FROM document_chunks_fts WHERE document_id = ?", (other_doc_id,)
+                "SELECT COUNT(*) FROM document_chunks_fts WHERE document_id = ?",
+                (other_doc_id,),
             ).fetchone()[0]
             assert other_chunk_count == 1, "other document chunks were removed"
 
@@ -216,7 +228,9 @@ class TestCascadeDeletion:
         assert other_doc.exists()
         assert other_img.exists()
 
-    def test_delete_user_isolation_does_not_affect_other_users(self, fresh_db, tmp_path):
+    def test_delete_user_isolation_does_not_affect_other_users(
+        self, fresh_db, tmp_path
+    ):
         """Even if two users share a filename/path pattern, only target is hit."""
         target = 31
         other = 32
@@ -229,7 +243,13 @@ class TestCascadeDeletion:
         other_file.write_text("other", encoding="utf-8")
 
         fresh_db.add_document(
-            target, "f1", str(target_file), "shared_name.txt", "text/plain", "target", None
+            target,
+            "f1",
+            str(target_file),
+            "shared_name.txt",
+            "text/plain",
+            "target",
+            None,
         )
         fresh_db.add_document(
             other, "f2", str(other_file), "shared_name.txt", "text/plain", "other", None
