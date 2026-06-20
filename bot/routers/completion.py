@@ -185,20 +185,29 @@ async def generate(message: Message, user_id: int, text: str):
                             await msg.edit_text(
                                 safe_text,
                                 parse_mode="MarkdownV2",
-                                reply_markup=None if wrapped_response else answer_keyboard,
+                                reply_markup=None
+                                if wrapped_response
+                                else answer_keyboard,
                             )
                         except Exception as e:
                             print(f"Markdown error: {e}")
                             await msg.edit_text(
                                 initial_content,
                                 parse_mode=None,
-                                reply_markup=None if wrapped_response else answer_keyboard,
+                                reply_markup=None
+                                if wrapped_response
+                                else answer_keyboard,
                             )
 
                         for extra_text in wrapped_response:
                             extra_msg = await msg.answer(extra_text)
-                            if wrapped_response.index(extra_text) == len(wrapped_response) - 1:
-                                await extra_msg.edit_reply_markup(reply_markup=answer_keyboard)
+                            if (
+                                wrapped_response.index(extra_text)
+                                == len(wrapped_response) - 1
+                            ):
+                                await extra_msg.edit_reply_markup(
+                                    reply_markup=answer_keyboard
+                                )
                     print(f"[{user_id}]: Finished!")
                 else:
                     if isinstance(chunk, OllamaErrorChunk):
@@ -209,11 +218,15 @@ async def generate(message: Message, user_id: int, text: str):
                         await _safe_typing(user_id)
     except asyncio.TimeoutError:
         print(f"[ERROR] Generation timeout for user {user_id}")
-        await msg.edit_text("⏳ Генерация заняла слишком много времени. Попробуйте ещё раз.")
+        await msg.edit_text(
+            "⏳ Генерация заняла слишком много времени. Попробуйте ещё раз."
+        )
         return
     except Exception as e:
         print(f"[ERROR] Generation failed: {e}")
-        await msg.edit_text(f"Произошла ошибка при генерации ответа. Попробуйте ещё раз.\n({str(e)[:200]})")
+        await msg.edit_text(
+            f"Произошла ошибка при генерации ответа. Попробуйте ещё раз.\n({str(e)[:200]})"
+        )
         return
     finally:
         _generating.discard(user_id)
@@ -225,7 +238,13 @@ async def generate(message: Message, user_id: int, text: str):
     _trim_context(chat)
 
     if db and chat.session_id:
-        db.save_message(user_id, chat.session_id, "assistant", assistant_content, chat.selected_model)
+        db.save_message(
+            user_id,
+            chat.session_id,
+            "assistant",
+            assistant_content,
+            chat.selected_model,
+        )
 
     # Fire-and-forget fact extraction so the user's reply isn't delayed.
     # Cheap LLM call (12s timeout, 0-3 facts per turn) populates the KB
@@ -233,6 +252,7 @@ async def generate(message: Message, user_id: int, text: str):
     if db and assistant_content.strip():
         try:
             from bot.services.kb_extract import extract_facts_from_exchange
+
             asyncio.create_task(
                 extract_facts_from_exchange(db, user_id, prompt, assistant_content)
             )
@@ -263,7 +283,9 @@ async def _maybe_compact(user_id: int, chat: UserChat):
     if not db or not chat.session_id:
         return
 
-    non_system = [m for m in chat.ollama_chat.messages if m.role in ("user", "assistant")]
+    non_system = [
+        m for m in chat.ollama_chat.messages if m.role in ("user", "assistant")
+    ]
     total_count = len(non_system)
 
     if total_count < COMPACTION_EVERY_N:
@@ -282,9 +304,7 @@ async def _maybe_compact(user_id: int, chat: UserChat):
     conversation_text = "\n\n".join(conversation_lines)
 
     summary_prompt = (
-        f"{SUMMARY_PROMPT}\n\n"
-        f"ДИАЛОГ:\n{conversation_text}\n\n"
-        f"ВЫЖИМКА:"
+        f"{SUMMARY_PROMPT}\n\n" f"ДИАЛОГ:\n{conversation_text}\n\n" f"ВЫЖИМКА:"
     )
 
     try:
@@ -311,14 +331,16 @@ async def _maybe_compact(user_id: int, chat: UserChat):
             return
 
         db.add_summary(chat.session_id, total_count, summary_content)
-        print(f"[COMPACT] Saved summary for session {chat.session_id} at {total_count} messages")
+        print(
+            f"[COMPACT] Saved summary for session {chat.session_id} at {total_count} messages"
+        )
 
         memory_prompt = (
             "Проанализируй диалог и извлеки ВАЖНЫЕ факты о пользователе.\n"
             "Для каждого факта укажи категорию: fact (факт), preference (предпочтение), note (заметка).\n"
             "Ответь ТОЛЬКО в формате (один факт на строку):\n"
             "[category] content\n"
-            "Если нет важных фактов — напиши \"НЕТ\".\n\n"
+            'Если нет важных фактов — напиши "НЕТ".\n\n'
             f"ДИАЛОГ:\n{conversation_text}\n\n"
             "ФАКТЫ:"
         )
@@ -348,10 +370,13 @@ async def _maybe_compact(user_id: int, chat: UserChat):
                     if line.startswith("[") and "]" in line:
                         close_idx = line.index("]")
                         category = line[1:close_idx].lower().strip()
-                        content = line[close_idx+1:].strip()
+                        content = line[close_idx + 1 :].strip()
                         if category in ("fact", "preference", "note") and content:
                             existing = db.get_memories(user_id, category)
-                            dup = any(m.get('content','').lower() == content.lower() for m in existing)
+                            dup = any(
+                                m.get("content", "").lower() == content.lower()
+                                for m in existing
+                            )
                             if not dup:
                                 db.add_memory(user_id, category, content)
                                 print(f"[MEMORY] Auto-saved: [{category}] {content}")
@@ -362,20 +387,24 @@ async def _maybe_compact(user_id: int, chat: UserChat):
         # get one. Bounded to 5/run so a backlog doesn't burn tokens.
         try:
             from bot.services.kb_extract import compress_pending_memories
+
             asyncio.create_task(compress_pending_memories(db, user_id, limit=5))
         except Exception:
             pass
 
-        base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][:1]
+        base_system_msgs = [m for m in chat.ollama_chat.messages if m.role == "system"][
+            :1
+        ]
         summary_msg = OllamaChatMessage(
-            role="system",
-            content=f"[Контекст предыдущего диалога]: {summary_content}"
+            role="system", content=f"[Контекст предыдущего диалога]: {summary_content}"
         )
         last_pairs = non_system[-4:]
 
-        chat.ollama_chat.messages = base_system_msgs + [summary_msg] + [
-            OllamaChatMessage(role=m.role, content=m.content) for m in last_pairs
-        ]
+        chat.ollama_chat.messages = (
+            base_system_msgs
+            + [summary_msg]
+            + [OllamaChatMessage(role=m.role, content=m.content) for m in last_pairs]
+        )
         print(f"[COMPACT] Context rebuilt: {len(chat.ollama_chat.messages)} messages")
     except Exception as e:
         print(f"[COMPACT] Failed: {e}")
@@ -404,9 +433,9 @@ def _build_system_content(user_id: int) -> str:
     if memories:
         memory_lines = []
         for m in memories:
-            cat = m.get('category', 'fact')
-            content = m.get('content', '')
-            summary = m.get('summary')
+            cat = m.get("category", "fact")
+            content = m.get("content", "")
+            summary = m.get("summary")
             display = summary if summary else content
             memory_lines.append(f"- [{cat}] {display}")
         system_content += "\n\nВажные факты и предпочтения:\n" + "\n".join(memory_lines)
@@ -414,11 +443,15 @@ def _build_system_content(user_id: int) -> str:
     return system_content
 
 
-def _find_summary_message(messages: list[OllamaChatMessage]) -> OllamaChatMessage | None:
+def _find_summary_message(
+    messages: list[OllamaChatMessage],
+) -> OllamaChatMessage | None:
     """Return the first non-base system message that carries a previous-dialog
     summary marker, or None if absent."""
     for m in messages:
-        if m.role == "system" and m.content.startswith("[Контекст предыдущего диалога]:"):
+        if m.role == "system" and m.content.startswith(
+            "[Контекст предыдущего диалога]:"
+        ):
             return m
     return None
 
@@ -444,7 +477,9 @@ def refresh_system_prompt(user_id: int) -> bool:
     if (
         chat.ollama_chat.messages
         and chat.ollama_chat.messages[0].role == "system"
-        and not chat.ollama_chat.messages[0].content.startswith("[Контекст предыдущего диалога]:")
+        and not chat.ollama_chat.messages[0].content.startswith(
+            "[Контекст предыдущего диалога]:"
+        )
     ):
         base_system = chat.ollama_chat.messages[0]
 
@@ -503,7 +538,7 @@ def _create_chat(user_id: int) -> bool:
             chats[user_id].ollama_chat.messages.append(
                 OllamaChatMessage(
                     role="system",
-                    content=f"[Контекст предыдущего диалога]: {latest_summary['summary']}"
+                    content=f"[Контекст предыдущего диалога]: {latest_summary['summary']}",
                 )
             )
 
@@ -530,7 +565,9 @@ async def cmd_models(message: Message):
         return
     models = await get_installed_models()
     model_list = "\n".join([f"- {m.name}" for m in models]) or "Нет моделей"
-    await message.answer(f"Доступные модели:\n{model_list}", reply_markup=command_keyboard)
+    await message.answer(
+        f"Доступные модели:\n{model_list}", reply_markup=command_keyboard
+    )
 
 
 @router.message(Command("help"))
@@ -545,49 +582,58 @@ async def cmd_help(message: Message):
     await message.answer(
         "🤖 Вот что я умею:\n\n"
         "✨ *Умный запрос*\n"
-        "• нажми кнопку «✨ Умный запрос» и пиши любой запрос — бот разберёт интент сам\n"
-        "• примеры:\n"
-        "  «погода в Москве»\n"
-        "  «новости Tesla»\n"
-        "  «заметка: купить акции TSLA»\n"
-        "  «поищи рецепт пасты»\n"
-        "  «просто расскажи про квантовые компьютеры»\n\n"
-        "⏰ *Напоминания*\n"
+        "Нажми кнопку «✨ Умный запрос» и пиши любым текстом — бот сам выберет инструмент.\n"
+        "Примеры:\n"
+        "• «погода в Москве на неделю»\n"
+        "• «новости Tesla»\n"
+        "• «заметка: купить акции TSLA»\n"
+        "• «поищи рецепт пасты»\n"
+        "• «расскажи про квантовые компьютеры»\n\n"
+        "⏰ *Напоминания и задачи*\n"
         "• «напомни через 5 минут позвонить»\n"
         "• «завтра в 9:00 проверить отчёт»\n"
-        "• «каждое утро в 9 покажи новости»\n\n"
-        "📋 *Задачи (AI выполнит сам)*\n"
-        "• «задача через час проверить почту»\n"
-        "• «задача завтра в 9:00 погода в Москве»\n"
-        "• «задача каждый день в 7:00 поищи новости Tesla»\n"
-        "• или /task — пошаговый режим\n\n"
-        "🧠 *Память*\n"
+        "• «каждое утро в 9 покажи новости»\n"
+        "• «задача через час проверить почту» — AI попробует выполнить сам\n"
+        "• «готово» / «сделал» рядом с задачей — закрыть напоминание\n\n"
+        "🧠 *Память и база знаний*\n"
         "• «запомни, я люблю краткие ответы»\n"
-        "• «факт: я работаю над проектом X»\n\n"
-        "🎤 *Голосовой ответ*\n"
-        "• включи в /settings; требуется локальный piper-tts\n\n"
-        "📷 *Вопросы по фото*\n"
-        "• отправь фото, а затем ответь на сообщение с описанием\n\n"
-        "✅ *Закрытие напоминаний и задач*\n"
-        "• напиши «готово», «сделал» или «done» рядом с текстом задачи — бот предложит закрыть\n\n"
-        "📋 *Команды:*\n"
-        "/start — меню\n"
-        "/remind — напоминание\n"
-        "/task — задача (пошагово)\n"
-        "/note — заметка\n"
-        "/memory — память\n"
-        "/kb — поиск по базе\n"
-        "/models — модели\n"
-        "/model — сменить модель\n"
-        "/clear — очистить историю\n"
-        "/monitors — мониторы",
+        "• «факт: я работаю над проектом X»\n"
+        "• /memory, /memory_add, /memory_summary — управление памятью\n"
+        "• /note — быстрая заметка\n\n"
+        "🌐 *Поиск, погода и новости*\n"
+        "• /search — поиск в интернете\n"
+        "• /weather Москва — погода и прогноз\n"
+        "• /news Tesla — актуальные новости\n"
+        "• /news_subscribe / /news_unsubscribe — подписки на темы\n\n"
+        "📡 *Мониторы сайтов*\n"
+        "• /monitor_add Имя https://example.com — следить за доступностью\n"
+        "• /monitors — список и управление\n\n"
+        "📊 *Отчёты и рутина*\n"
+        "• /briefing — утренний брифинг сейчас\n"
+        "• /digest — вечерний дайджест сейчас\n"
+        "• /report — ежедневный отчёт\n"
+        "• /cleanup — очистить старые файлы\n\n"
+        "🎙 *Голос и фото*\n"
+        "• Голосовые сообщения — отправь аудио, бот распознает и ответит\n"
+        "• Голосовой ответ — включить в /settings (требуется локальный piper-tts)\n"
+        "• Отправь фото, затем ответь на сообщение с описанием — вопрос по картинке\n\n"
+        "⚙️ *Настройки и модели*\n"
+        "• /settings — часовой пояс, язык, голос, новости, отчёты\n"
+        "• /models — список моделей\n"
+        "• /model <model> — сменить модель\n"
+        "• /clear — очистить историю чата\n"
+        "• /start — главное меню\n\n"
+        "🛡 *Админам*\n"
+        "/admin_requests, /admin_approve, /admin_reject, /admin_list, /admin_promote, /admin_demote, /admin_remove",
         reply_markup=command_keyboard,
         parse_mode="Markdown",
     )
 
 
 @router.message(Command("model"))
-@router.message(lambda m: m.text and (m.text == "/model" or m.text.startswith("/model ")))
+@router.message(
+    lambda m: m.text and (m.text == "/model" or m.text.startswith("/model "))
+)
 async def cmd_model(message: Message, state: FSMContext):
     if message.from_user is None:
         return
@@ -598,19 +644,22 @@ async def cmd_model(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "Введи название модели:\n"
-            "Пример: llama2:13b-chat",
+            "Введи название модели:\n" "Пример: llama2:13b-chat",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_model)
         return
     model_to_set = parts[1].strip()
     if not await model_is_installed(model_to_set):
-        await message.answer(f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard)
+        await message.answer(
+            f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
+        )
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard)
+    await message.answer(
+        f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard
+    )
 
 
 @router.message(BotStates.waiting_model)
@@ -633,16 +682,22 @@ async def process_model_state(message: Message, state: FSMContext):
         return
     if text.startswith("/") or text in BUTTON_MAP:
         await state.clear()
-        await message.answer("Текущее действие отменено.", reply_markup=command_keyboard)
+        await message.answer(
+            "Текущее действие отменено.", reply_markup=command_keyboard
+        )
         return
     model_to_set = text.strip()
     if not await model_is_installed(model_to_set):
-        await message.answer(f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard)
+        await message.answer(
+            f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
+        )
         await state.clear()
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard)
+    await message.answer(
+        f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard
+    )
     await state.clear()
 
 
@@ -660,8 +715,6 @@ async def cmd_clear(message: Message):
         db.close_session(chats[user_id].session_id, "User cleared chat")
     _delete_chat(user_id)
     await message.answer("✅ История очищена.", reply_markup=command_keyboard)
-
-
 
 
 @router.callback_query(F.data == "like")
@@ -724,13 +777,16 @@ async def _download_document(document):
     return tmp_path, document.file_name or "file", suffix.lower()
 
 
-async def answer_document_question(message: Message, user_id: int, question: str, reply_to_message_id: int) -> bool:
+async def answer_document_question(
+    message: Message, user_id: int, question: str, reply_to_message_id: int
+) -> bool:
     """If reply_to_message_id maps to a saved document, answer from its chunks.
 
     Returns True when a document was found and a reply was sent, so callers can
     skip the generic chat path.
     """
     from bot.services import documents as documents_service
+
     doc_id = documents_service.doc_id_for_message(reply_to_message_id)
     if doc_id is None:
         return False
@@ -753,17 +809,22 @@ async def handle_document(message: Message, state: FSMContext):
     if document is None:
         return
 
-    await message.answer(f"📄 Получен файл: {document.file_name or 'unknown'}\nЗагружаю и извлекаю текст...")
+    await message.answer(
+        f"📄 Получен файл: {document.file_name or 'unknown'}\nЗагружаю и извлекаю текст..."
+    )
 
     tmp_path = None
     try:
         tmp_path, fname, suffix = await _download_document(document)
     except Exception as e:
-        await message.answer(f"❌ Ошибка загрузки файла: {str(e)[:200]}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка загрузки файла: {str(e)[:200]}", reply_markup=command_keyboard
+        )
         return
 
     try:
         from bot.services import documents as documents_service
+
         doc = await documents_service.save_document(
             user_id=user_id,
             telegram_file_id=document.file_id,
@@ -774,7 +835,9 @@ async def handle_document(message: Message, state: FSMContext):
         )
     except Exception as e:
         logger.exception("[DOCUMENT] failed to save document for user_id=%s", user_id)
-        await message.answer(f"❌ Ошибка обработки файла: {str(e)[:200]}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка обработки файла: {str(e)[:200]}", reply_markup=command_keyboard
+        )
         return
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -809,6 +872,7 @@ async def handle_photo(message: Message, state: FSMContext):
         return
 
     from bot.services import images as images_service
+
     largest = images_service._largest_photo(photo_sizes)
     if largest is None:
         return
@@ -824,7 +888,9 @@ async def handle_photo(message: Message, state: FSMContext):
         await aiogram_bot.download_file(file.file_path, tmp_path)
     except Exception as e:
         logger.exception("[PHOTO] download failed for user_id=%s", user_id)
-        await message.answer(f"❌ Ошибка загрузки фото: {str(e)[:200]}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка загрузки фото: {str(e)[:200]}", reply_markup=command_keyboard
+        )
         return
 
     try:
@@ -838,7 +904,9 @@ async def handle_photo(message: Message, state: FSMContext):
         )
     except Exception as e:
         logger.exception("[PHOTO] processing failed for user_id=%s", user_id)
-        await message.answer(f"❌ Ошибка обработки фото: {str(e)[:200]}", reply_markup=command_keyboard)
+        await message.answer(
+            f"❌ Ошибка обработки фото: {str(e)[:200]}", reply_markup=command_keyboard
+        )
         return
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -877,6 +945,7 @@ async def cb_save_image_to_memory(callback: CallbackQuery, state: FSMContext):
         return
 
     from bot.services import images as images_service
+
     result = await images_service.save_description_to_memory(user_id, image_id)
     await callback.message.edit_text(result, reply_markup=command_keyboard)
     await callback.answer("Сохранено")
@@ -891,5 +960,3 @@ async def cb_image_close(callback: CallbackQuery, state: FSMContext):
         except Exception:
             pass
     await callback.answer("Закрыто")
-
-
