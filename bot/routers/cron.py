@@ -33,7 +33,7 @@ from bot.ollama.dto import OllamaErrorChunk
 from bot.security import is_admin, is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
 from bot.routers.settings import cmd_settings
-from bot.services.profile import format_local
+from bot.services.profile import format_local, local_to_utc, now_in_tz
 from bot.services.weather import get_forecast, get_weather
 from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
 from bot.states import BotStates
@@ -617,20 +617,21 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    now = datetime.now(timezone.utc)
-    trigger_at = now
+    tz_name = _user_tz(callback.from_user.id)
+    now_local = now_in_tz(tz_name)
+    trigger_at_local = now_local
     recurring = None
 
     if mode == "5m":
-        trigger_at = now + timedelta(minutes=5)
+        trigger_at_local = now_local + timedelta(minutes=5)
     elif mode == "tomorrow9":
-        trigger_at = (now + timedelta(days=1)).replace(
+        trigger_at_local = (now_local + timedelta(days=1)).replace(
             hour=9, minute=0, second=0, microsecond=0
         )
     elif mode == "daily9":
-        trigger_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
-        if trigger_at <= now:
-            trigger_at += timedelta(days=1)
+        trigger_at_local = now_local.replace(hour=9, minute=0, second=0, microsecond=0)
+        if trigger_at_local <= now_local:
+            trigger_at_local += timedelta(days=1)
         recurring = "daily"
     elif mode == "auto":
         await state.set_state(BotStates.waiting_remind_time)
@@ -642,7 +643,9 @@ async def cb_remind_quick(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Введи время")
         return
     else:
-        trigger_at = now + timedelta(minutes=5)
+        trigger_at_local = now_local + timedelta(minutes=5)
+
+    trigger_at = local_to_utc(trigger_at_local, tz_name)
 
     db.add_reminder(
         user_id=callback.from_user.id,
@@ -944,39 +947,43 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    now = datetime.now(timezone.utc)
-    trigger_at = now
+    tz_name = _user_tz(callback.from_user.id)
+    now_local = now_in_tz(tz_name)
+    trigger_at_local = now_local
     recurring = None
 
     if mode == "5m":
-        trigger_at = now + timedelta(minutes=5)
+        trigger_at_local = now_local + timedelta(minutes=5)
     elif mode == "1h":
-        trigger_at = now + timedelta(hours=1)
+        trigger_at_local = now_local + timedelta(hours=1)
     elif mode == "tomorrow9":
-        trigger_at = (now + timedelta(days=1)).replace(
+        trigger_at_local = (now_local + timedelta(days=1)).replace(
             hour=9, minute=0, second=0, microsecond=0
         )
     elif mode == "daily7":
-        trigger_at = now.replace(hour=7, minute=0, second=0, microsecond=0)
-        if trigger_at <= now:
-            trigger_at += timedelta(days=1)
+        trigger_at_local = now_local.replace(hour=7, minute=0, second=0, microsecond=0)
+        if trigger_at_local <= now_local:
+            trigger_at_local += timedelta(days=1)
         recurring = "daily"
     elif mode == "weekday9":
-        trigger_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
-        if trigger_at <= now or trigger_at.weekday() >= 5:
-            trigger_at += timedelta(days=1)
-            while trigger_at.weekday() >= 5:
-                trigger_at += timedelta(days=1)
+        trigger_at_local = now_local.replace(hour=9, minute=0, second=0, microsecond=0)
+        if trigger_at_local <= now_local or trigger_at_local.weekday() >= 5:
+            trigger_at_local += timedelta(days=1)
+            while trigger_at_local.weekday() >= 5:
+                trigger_at_local += timedelta(days=1)
         recurring = "weekday"
     elif mode == "friday18":
-        days_ahead = (4 - now.weekday()) % 7
+        days_ahead = (4 - now_local.weekday()) % 7
         if (
             days_ahead == 0
-            and now.replace(hour=18, minute=0, second=0, microsecond=0) <= now
+            and now_local.replace(hour=18, minute=0, second=0, microsecond=0)
+            <= now_local
         ):
             days_ahead = 7
-        trigger_at = now + timedelta(days=days_ahead)
-        trigger_at = trigger_at.replace(hour=18, minute=0, second=0, microsecond=0)
+        trigger_at_local = now_local + timedelta(days=days_ahead)
+        trigger_at_local = trigger_at_local.replace(
+            hour=18, minute=0, second=0, microsecond=0
+        )
         recurring = "friday"
     elif mode == "manual":
         await state.set_state(BotStates.waiting_task_time)
@@ -993,7 +1000,9 @@ async def cb_select_task_time(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Введи время вручную")
         return
     else:
-        trigger_at = now + timedelta(minutes=5)
+        trigger_at_local = now_local + timedelta(minutes=5)
+
+    trigger_at = local_to_utc(trigger_at_local, tz_name)
 
     if db is None:
         await callback.answer("База данных недоступна", show_alert=True)
