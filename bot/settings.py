@@ -23,6 +23,48 @@ SYSTEM_MESSAGE = "You are a helpful assistant. Answer concisely and clearly."
 
 # Ollama server configuration
 OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST", default="https://api.ollama.com")
+
+# Cloud-only model allow-list. Local models (e.g. llama3.2:latest) are rejected
+# by /model because the bot runs against api.ollama.com where only cloud IDs are
+# available and billing is per-token. Keep this list in sync with the provider.
+CLOUD_MODELS = [
+    "kimi-k2.7-code:cloud",
+    "kimi-k2.5:cloud",
+    "kimi-k2.6:cloud",
+    "qwen3-coder:480b:cloud",
+    "qwen3-coder-next:cloud",
+    "qwen3.5:397b:cloud",
+    "deepseek-v3.1:671b:cloud",
+    "deepseek-v3.2:cloud",
+    "deepseek-v4-pro:cloud",
+    "deepseek-v4-flash:cloud",
+    "nemotron-3-super:cloud",
+    "nemotron-3-ultra:cloud",
+    "nemotron-3-nano:30b:cloud",
+    "mistral-large-3:675b:cloud",
+    "ministral-3:3b:cloud",
+    "ministral-3:8b:cloud",
+    "ministral-3:14b:cloud",
+    "gpt-oss:20b:cloud",
+    "gpt-oss:120b:cloud",
+    "gemma3:4b:cloud",
+    "gemma3:12b:cloud",
+    "gemma3:27b:cloud",
+    "gemma4:31b:cloud",
+    "glm-4.7:cloud",
+    "glm-5:cloud",
+    "glm-5.1:cloud",
+    "glm-5.2:cloud",
+    "minimax-m2.1:cloud",
+    "minimax-m2.5:cloud",
+    "minimax-m2.7:cloud",
+    "minimax-m3:cloud",
+    "devstral-small-2:24b:cloud",
+    "devstral-2:123b:cloud",
+    "gemini-3-flash-preview:cloud",
+    "rnj-1:8b:cloud",
+]
+
 OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud")
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"

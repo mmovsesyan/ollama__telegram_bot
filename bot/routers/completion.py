@@ -1,17 +1,14 @@
-from aiogram import F, Router
-from aiogram.filters.command import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
-from pydantic import BaseModel
-from typing import Any
 import asyncio
-import json
 import logging
 import os
 import tempfile
 import time
 
-logger = logging.getLogger(__name__)
+from aiogram import F, Router
+from aiogram.filters.command import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+from pydantic import BaseModel
 
 from bot.bot import bot as aiogram_bot
 from bot.keyboards.inline import answer_keyboard, image_actions_keyboard
@@ -20,8 +17,8 @@ from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
 from bot.security import is_allowed as _is_allowed
-from bot.states import BotStates
 from bot.settings import (
+    CLOUD_MODELS,
     COMPACTION_EVERY_N,
     DOCUMENTS_DIR,
     MAX_CONTEXT_MESSAGES,
@@ -32,8 +29,23 @@ from bot.settings import (
     SUMMARY_PROMPT,
     SYSTEM_MESSAGE,
 )
+from bot.states import BotStates
+
+logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def _is_cloud_model(model_id: str) -> bool:
+    """Only cloud model IDs from the provider allow-list are selectable."""
+    if not model_id:
+        return False
+    normalized = model_id.lower().strip()
+    if normalized in CLOUD_MODELS:
+        return True
+    # Accept model names that already end with :cloud even if not in the list.
+    return normalized.endswith(":cloud")
+
 
 db = None  # injected in __init__
 
@@ -470,7 +482,6 @@ def refresh_system_prompt(user_id: int) -> bool:
 
     base_system = None
     summary_msg = _find_summary_message(chat.ollama_chat.messages)
-    other_messages = [m for m in chat.ollama_chat.messages if m.role != "system"]
 
     # The first system message is the base prompt unless it is the previous-dialog
     # summary marker (which can sit at index 0 if the base prompt was never built).
@@ -644,12 +655,20 @@ async def cmd_model(message: Message, state: FSMContext):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "Введи название модели:\n" "Пример: llama2:13b-chat",
+            "Введи название модели:\n"
+            "Доступны только облачные модели: kimi-k2.7-code:cloud, deepseek-v3.2:cloud и др.",
             reply_markup=cancel_keyboard,
         )
         await state.set_state(BotStates.waiting_model)
         return
     model_to_set = parts[1].strip()
+    if not _is_cloud_model(model_to_set):
+        await message.answer(
+            f"⚠️ Модель `{model_to_set}` недоступна. Используй только облачные модели из /models.",
+            reply_markup=command_keyboard,
+            parse_mode="Markdown",
+        )
+        return
     if not await model_is_installed(model_to_set):
         await message.answer(
             f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
@@ -687,6 +706,14 @@ async def process_model_state(message: Message, state: FSMContext):
         )
         return
     model_to_set = text.strip()
+    if not _is_cloud_model(model_to_set):
+        await message.answer(
+            f"⚠️ Модель `{model_to_set}` недоступна. Используй только облачные модели из /models.",
+            reply_markup=command_keyboard,
+            parse_mode="Markdown",
+        )
+        await state.clear()
+        return
     if not await model_is_installed(model_to_set):
         await message.answer(
             f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
