@@ -1,5 +1,6 @@
 """Tests for user access-control DB layer and security helpers."""
 
+import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
@@ -101,3 +102,143 @@ class TestSecurityHelpers:
         assert is_admin(42) is True  # fallback treats env-list as allowed
         monkeypatch.setattr("bot.security.ALLOWED_CHAT_IDS", "")
         assert is_allowed(99) is True
+
+
+class TestCascadeDeletion:
+    def test_delete_user_cascade_removes_all_data_and_files(self, fresh_db, tmp_path):
+        target = 11
+        other = 22
+
+        fresh_db.ensure_user(target, status="approved")
+        fresh_db.ensure_user(other, status="approved")
+
+        # Preferences
+        fresh_db.set_user_prefs(target, language="ru")
+        fresh_db.set_user_prefs(other, language="en")
+
+        # Session + messages + summary
+        target_session = fresh_db.get_or_create_active_session(target, "model-x")
+        fresh_db.save_message(target, target_session, "user", "hello target")
+        fresh_db.add_summary(target_session, 1, "target summary")
+
+        other_session = fresh_db.get_or_create_active_session(other, "model-y")
+        fresh_db.save_message(other, other_session, "user", "hello other")
+        fresh_db.add_summary(other_session, 1, "other summary")
+
+        # Reminders, monitors, memories, shown news
+        fresh_db.add_reminder(target, "target reminder")
+        fresh_db.add_monitor(target, "target site", "http://target.example")
+        fresh_db.add_memory(target, "fact", "target likes tea")
+        fresh_db.mark_news_shown(target, "http://news/target", "target news")
+
+        fresh_db.add_reminder(other, "other reminder")
+        fresh_db.add_monitor(other, "other site", "http://other.example")
+        fresh_db.add_memory(other, "fact", "other likes coffee")
+        fresh_db.mark_news_shown(other, "http://news/other", "other news")
+
+        # Documents + images with real temp files
+        target_doc = tmp_path / "target.txt"
+        target_doc.write_text("target doc", encoding="utf-8")
+        target_img = tmp_path / "target.jpg"
+        target_img.write_bytes(b"targetjpg")
+        other_doc = tmp_path / "other.txt"
+        other_doc.write_text("other doc", encoding="utf-8")
+        other_img = tmp_path / "other.jpg"
+        other_img.write_bytes(b"otherjpg")
+
+        target_doc_id = fresh_db.add_document(
+            target, "f_target", str(target_doc), "target.txt", "text/plain", "target doc", None
+        )
+        fresh_db.add_document_chunks(target_doc_id, target, ["target chunk"])
+        target_img_id = fresh_db.add_image(
+            target, "p_target", str(target_img), None, None, None
+        )
+
+        other_doc_id = fresh_db.add_document(
+            other, "f_other", str(other_doc), "other.txt", "text/plain", "other doc", None
+        )
+        fresh_db.add_document_chunks(other_doc_id, other, ["other chunk"])
+        other_img_id = fresh_db.add_image(
+            other, "p_other", str(other_img), None, None, None
+        )
+
+        assert fresh_db.delete_user(target) is True
+
+        # Target must be gone from users table
+        assert fresh_db.get_user(target) is None
+
+        # Target data must be gone from every user-scoped table
+        user_tables = [
+            "messages",
+            "sessions",
+            "user_prefs",
+            "reminders",
+            "monitors",
+            "memories",
+            "shown_news",
+            "documents",
+            "images",
+        ]
+        with sqlite3.connect(fresh_db.db_path) as conn:
+            for table in user_tables:
+                count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (target,)
+                ).fetchone()[0]
+                assert count == 0, f"{table} still has rows for target user"
+
+            # Summaries tied to target sessions must be gone
+            target_summary_count = conn.execute(
+                "SELECT COUNT(*) FROM summaries WHERE session_id = ?", (target_session,)
+            ).fetchone()[0]
+            assert target_summary_count == 0, "summaries still has rows for target session"
+
+            # Other user's data must remain
+            for table in user_tables:
+                count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (other,)
+                ).fetchone()[0]
+                assert count > 0, f"{table} lost rows for other user"
+
+            # Other summary and chunks must remain
+            other_summary_count = conn.execute(
+                "SELECT COUNT(*) FROM summaries WHERE session_id = ?", (other_session,)
+            ).fetchone()[0]
+            assert other_summary_count == 1, "other summary was removed"
+
+            other_chunk_count = conn.execute(
+                "SELECT COUNT(*) FROM document_chunks_fts WHERE document_id = ?", (other_doc_id,)
+            ).fetchone()[0]
+            assert other_chunk_count == 1, "other document chunks were removed"
+
+        # Files
+        assert not target_doc.exists()
+        assert not target_img.exists()
+        assert other_doc.exists()
+        assert other_img.exists()
+
+    def test_delete_user_isolation_does_not_affect_other_users(self, fresh_db, tmp_path):
+        """Even if two users share a filename/path pattern, only target is hit."""
+        target = 31
+        other = 32
+        fresh_db.ensure_user(target, status="approved")
+        fresh_db.ensure_user(other, status="approved")
+
+        target_file = tmp_path / "shared_name.txt"
+        target_file.write_text("target", encoding="utf-8")
+        other_file = tmp_path / "shared_name_other.txt"
+        other_file.write_text("other", encoding="utf-8")
+
+        fresh_db.add_document(
+            target, "f1", str(target_file), "shared_name.txt", "text/plain", "target", None
+        )
+        fresh_db.add_document(
+            other, "f2", str(other_file), "shared_name.txt", "text/plain", "other", None
+        )
+
+        assert fresh_db.delete_user(target) is True
+        assert not target_file.exists()
+        assert other_file.exists()
+        assert len(fresh_db.get_documents(other)) == 1
+
+    def test_delete_user_returns_false_when_user_missing(self, fresh_db):
+        assert fresh_db.delete_user(9999) is False

@@ -1029,14 +1029,62 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
+    def _unlink_safely(self, path: str | None) -> None:
+        """Best-effort removal of a local file; never raises."""
+        if not path:
+            return
+        try:
+            p = Path(path)
+            if p.is_file():
+                p.unlink()
+        except Exception:
+            pass
+
     def delete_user(self, user_id: int) -> bool:
-        """Remove the access-control record. User data in other tables is kept
-        for audit/retention; the user simply loses access.
+        """Remove a user and all associated data, including local files.
+
+        Every DELETE is filtered by user_id so other users are never touched.
+        DB changes happen in one transaction; files are removed only after the
+        transaction commits successfully.
         """
         with sqlite3.connect(self.db_path) as conn:
+            # Collect local file paths before the rows disappear.
+            cursor = conn.execute(
+                "SELECT local_path FROM documents WHERE user_id = ? AND local_path IS NOT NULL",
+                (user_id,),
+            )
+            doc_paths = [row[0] for row in cursor.fetchall()]
+            cursor = conn.execute(
+                "SELECT local_path FROM images WHERE user_id = ? AND local_path IS NOT NULL",
+                (user_id,),
+            )
+            image_paths = [row[0] for row in cursor.fetchall()]
+
+            # Delete dependent data first, then the owning user row.
+            conn.execute(
+                "DELETE FROM document_chunks_fts WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)",
+                (user_id,),
+            )
+            conn.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM images WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
+            conn.execute(
+                "DELETE FROM summaries WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)",
+                (user_id,),
+            )
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM monitors WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM shown_news WHERE user_id = ?", (user_id,))
             cursor = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
             conn.commit()
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+
+        for path in doc_paths + image_paths:
+            self._unlink_safely(path)
+        return deleted
 
     def get_users_by_status(self, status: str) -> list[dict]:
         if status not in ("pending", "approved", "rejected", "blocked"):

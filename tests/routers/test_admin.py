@@ -158,3 +158,33 @@ async def test_non_admin_cannot_promote(fresh_db):
     await cron_module.cmd_admin_promote(msg, state)
     assert not msg.answer.called
     assert is_admin(2) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_remove_cascade_deletes_user_data_and_files(fresh_db, tmp_path):
+    fresh_db.ensure_user(1, status="approved")
+    fresh_db.set_user_admin(1, True)
+    fresh_db.ensure_user(2, status="approved")
+
+    doc_file = tmp_path / "target_doc.txt"
+    doc_file.write_text("target content", encoding="utf-8")
+    fresh_db.add_document(
+        2, "f2", str(doc_file), "target_doc.txt", "text/plain", "target content", None
+    )
+
+    img_file = tmp_path / "target_img.jpg"
+    img_file.write_bytes(b"targetjpg")
+    fresh_db.add_image(2, "p2", str(img_file), None, None, None)
+
+    msg = _message(user_id=1, text="/admin_remove 2")
+    state = MagicMock()
+    state.clear = AsyncMock()
+    await cron_module.cmd_admin_remove(msg, state)
+
+    assert fresh_db.get_user(2) is None
+    assert not doc_file.exists()
+    assert not img_file.exists()
+    assert msg.answer.await_args is not None
+    answer_text = msg.answer.await_args.args[0]
+    assert "2" in answer_text
+    assert "удален" in answer_text.lower()

@@ -2917,7 +2917,7 @@ async def cmd_admin_remove(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        f"🗑 Пользователь `{target_id}` удалён из списка доступа.",
+        f"🗑 Пользователь `{target_id}` и все его данные удалены.",
         reply_markup=command_keyboard,
         parse_mode="Markdown",
     )
