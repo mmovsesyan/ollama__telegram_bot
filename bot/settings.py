@@ -37,19 +37,29 @@ OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="") or OLLAMA_API_K
 # Available models: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, large-v3, turbo
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", default="tiny")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", default="auto")  # cpu, cuda, auto
-WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", default="default")  # int8, float16, default
+WHISPER_COMPUTE_TYPE = os.getenv(
+    "WHISPER_COMPUTE_TYPE", default="default"
+)  # int8, float16, default
 
 # Document storage and chunking settings
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", default="data")
 DOCUMENT_CHUNK_SIZE = int(os.getenv("DOCUMENT_CHUNK_SIZE", default="1500"))
 DOCUMENT_CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", default="200"))
-DOCUMENT_MAX_SUMMARY_CHARS = int(os.getenv("DOCUMENT_MAX_SUMMARY_CHARS", default="8000"))
+DOCUMENT_MAX_SUMMARY_CHARS = int(
+    os.getenv("DOCUMENT_MAX_SUMMARY_CHARS", default="8000")
+)
 
 # Smart reminder suggestion settings
 SMART_REMINDERS_ENABLED = os.getenv("SMART_REMINDERS_ENABLED", default="1") == "1"
-SMART_REMINDERS_COOLDOWN_MIN = int(os.getenv("SMART_REMINDERS_COOLDOWN_MIN", default="5"))
-SMART_REMINDERS_MESSAGE_THRESHOLD = int(os.getenv("SMART_REMINDERS_MESSAGE_THRESHOLD", default="10"))
-SMART_REMINDERS_CONFIDENCE = float(os.getenv("SMART_REMINDERS_CONFIDENCE", default="0.7"))
+SMART_REMINDERS_COOLDOWN_MIN = int(
+    os.getenv("SMART_REMINDERS_COOLDOWN_MIN", default="5")
+)
+SMART_REMINDERS_MESSAGE_THRESHOLD = int(
+    os.getenv("SMART_REMINDERS_MESSAGE_THRESHOLD", default="10")
+)
+SMART_REMINDERS_CONFIDENCE = float(
+    os.getenv("SMART_REMINDERS_CONFIDENCE", default="0.7")
+)
 
 # Image / vision settings
 IMAGES_DIR = os.getenv("IMAGES_DIR", default="data")
@@ -71,26 +81,26 @@ COMPACTION_EVERY_N = int(os.getenv("COMPACTION_EVERY_N", default="8"))
 DEFAULT_RSS_FEEDS = os.getenv(
     "DEFAULT_RSS_FEEDS",
     default="https://habr.com/ru/rss/articles/top/,"
-            "https://vc.ru/rss/all,"
-            "https://www.cnews.ru/inc/rss/news.xml,"
-            "https://tadviser.ru/rss/news,"
-            "https://www.iguides.ru/main/rss/mainarticles.xml,"
-            "https://lenta.ru/rss/news/it,"
-            "https://www.rbc.ru/technology/?utm_source=topline_rbc,"
-            "https://www.kommersant.ru/rss/regions/77.xml,"
-            "https://www.vedomosti.ru/rss/news,"
-            "https://www.bloomberg.com/feeds/markets/news.rss,"
-            "https://www.reuters.com/business/finance/rss/,"
-            "https://feeds.a.dj.com/rss/RSSMarketsMain.xml,"
-            "https://www.ft.com/rss/home/uk,"
-            "https://techcrunch.com/feed/,"
-            "https://www.theverge.com/rss/index.xml,"
-            "https://www.igromania.ru/rss/articles.xml,"
-            "https://stopgame.ru/rss/rss_news.xml,"
-            "https://dtf.ru/rss/all,"
-            "https://kanobu.ru/rss/news.rss,"
-            "https://www.bbc.co.uk/russian/rss.xml,"
-            "https://meduza.io/rss/all",
+    "https://vc.ru/rss/all,"
+    "https://www.cnews.ru/inc/rss/news.xml,"
+    "https://tadviser.ru/rss/news,"
+    "https://www.iguides.ru/main/rss/mainarticles.xml,"
+    "https://lenta.ru/rss/news/it,"
+    "https://www.rbc.ru/technology/?utm_source=topline_rbc,"
+    "https://www.kommersant.ru/rss/regions/77.xml,"
+    "https://www.vedomosti.ru/rss/news,"
+    "https://www.bloomberg.com/feeds/markets/news.rss,"
+    "https://www.reuters.com/business/finance/rss/,"
+    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml,"
+    "https://www.ft.com/rss/home/uk,"
+    "https://techcrunch.com/feed/,"
+    "https://www.theverge.com/rss/index.xml,"
+    "https://www.igromania.ru/rss/articles.xml,"
+    "https://stopgame.ru/rss/rss_news.xml,"
+    "https://dtf.ru/rss/all,"
+    "https://kanobu.ru/rss/news.rss,"
+    "https://www.bbc.co.uk/russian/rss.xml,"
+    "https://meduza.io/rss/all",
 )
 RSS_FEEDS = [u.strip() for u in DEFAULT_RSS_FEEDS.split(",") if u.strip()]
 
@@ -99,11 +109,18 @@ RSS_FEEDS = [u.strip() for u in DEFAULT_RSS_FEEDS.split(",") if u.strip()]
 _RSS_TOPIC_FEEDS_RAW = os.getenv(
     "RSS_TOPIC_FEEDS",
     default="games:https://www.igromania.ru/rss/articles.xml,https://stopgame.ru/rss/rss_news.xml,https://dtf.ru/rss/all,https://kanobu.ru/rss/news.rss;"
-            "игры:https://www.igromania.ru/rss/articles.xml,https://stopgame.ru/rss/rss_news.xml,https://dtf.ru/rss/all,https://kanobu.ru/rss/news.rss;"
-            "tech:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/,https://www.theverge.com/rss/index.xml;"
-            "markets:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
-            "ai:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/;"
-            "world:https://www.bbc.co.uk/russian/rss.xml,https://meduza.io/rss/all,https://www.kommersant.ru/rss/regions/77.xml",
+    "игры:https://www.igromania.ru/rss/articles.xml,https://stopgame.ru/rss/rss_news.xml,https://dtf.ru/rss/all,https://kanobu.ru/rss/news.rss;"
+    "tech:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/,https://www.theverge.com/rss/index.xml;"
+    "технологии:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/,https://www.theverge.com/rss/index.xml;"
+    "markets:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
+    "акции:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
+    "финансы:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
+    "рынки:https://www.kommersant.ru/rss/regions/77.xml,https://www.vedomosti.ru/rss/news,https://www.bloomberg.com/feeds/markets/news.rss,https://feeds.a.dj.com/rss/RSSMarketsMain.xml;"
+    "ai:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/;"
+    "ии:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/;"
+    "искусственный интеллект:https://habr.com/ru/rss/articles/top/,https://vc.ru/rss/all,https://techcrunch.com/feed/;"
+    "world:https://www.bbc.co.uk/russian/rss.xml,https://meduza.io/rss/all,https://www.kommersant.ru/rss/regions/77.xml;"
+    "мир:https://www.bbc.co.uk/russian/rss.xml,https://meduza.io/rss/all,https://www.kommersant.ru/rss/regions/77.xml",
 )
 
 

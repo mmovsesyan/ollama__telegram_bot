@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -72,6 +72,27 @@ class TestTextHelpers:
     def test_matches_topic_phrase(self):
         assert _matches_topic("новый iPhone 16 Pro", "iphone 16") is True
         assert _matches_topic("новый iPhone 16 Pro", "iphone 17") is False
+
+    def test_matches_topic_short_russian_word_uses_whole_word(self):
+        # "ии" must not match as a substring inside unrelated words.
+        assert _matches_topic("Новости об ИИ: GPT-5", "ии") is True
+        assert _matches_topic("Медведев: правил в отношении Киева", "ии") is False
+        assert _matches_topic("российских городах ничего не нашлось", "ии") is False
+
+    def test_matches_topic_multi_word_requires_all_words(self):
+        assert (
+            _matches_topic(
+                "искусственный интеллект меняет мир", "искусственный интеллект"
+            )
+            is True
+        )
+        assert (
+            _matches_topic(
+                "искусственный интеллект меняет мир",
+                "искусственный интеллект нейросети",
+            )
+            is False
+        )
 
     def test_matches_topic_no_topic(self):
         assert _matches_topic("anything", None) is True
@@ -237,8 +258,18 @@ class TestParseFeeds:
 
         def _fake_parse(raw):
             entries = [
-                SimpleNamespace(title="A", link="https://x.com/1", summary="s1", published_parsed=None),
-                SimpleNamespace(title="B", link="https://x.com/1", summary="s2", published_parsed=None),
+                SimpleNamespace(
+                    title="A",
+                    link="https://x.com/1",
+                    summary="s1",
+                    published_parsed=None,
+                ),
+                SimpleNamespace(
+                    title="B",
+                    link="https://x.com/1",
+                    summary="s2",
+                    published_parsed=None,
+                ),
             ]
             return SimpleNamespace(entries=entries)
 
@@ -315,7 +346,12 @@ class TestGetFreshNews:
 class TestWebFallback:
     @pytest.mark.asyncio
     async def test_duckduckgo_news_provider(self, monkeypatch):
-        result = {"title": "DDG News", "url": "https://ddg.com/n", "body": "body text", "date": None}
+        result = {
+            "title": "DDG News",
+            "url": "https://ddg.com/n",
+            "body": "body text",
+            "date": None,
+        }
         monkeypatch.setattr(
             rss_module,
             "_search_duckduckgo_news",
@@ -349,8 +385,15 @@ class TestWebFallback:
         assert items[0].title == "Text"
 
     @pytest.mark.asyncio
-    async def test_web_fallback_filters_english_results_when_russian_required(self, monkeypatch):
-        result = {"title": "DDG News", "url": "https://ddg.com/n", "body": "body text", "date": None}
+    async def test_web_fallback_filters_english_results_when_russian_required(
+        self, monkeypatch
+    ):
+        result = {
+            "title": "DDG News",
+            "url": "https://ddg.com/n",
+            "body": "body text",
+            "date": None,
+        }
         monkeypatch.setattr(
             rss_module,
             "_search_duckduckgo_news",

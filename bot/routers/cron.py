@@ -2424,11 +2424,23 @@ async def _process_news(message: Message, topic: str | None = None):
         return
     user_id = message.from_user.id
     label = topic.strip() if topic and topic.strip() else "топ-новости"
+
+    # Expand known category aliases (e.g. "ии" → "искусственный интеллект нейросети")
+    # so RSS topic feeds and keyword matching both hit the right content.
+    from bot.services.news_categories import _normalize_category, _topic_for_category
+
+    search_topic = topic
+    if topic:
+        normalized = _normalize_category(topic)
+        expanded = _topic_for_category(normalized)
+        if expanded != normalized:
+            search_topic = expanded
+
     await message.answer(f"📰 Ищу новости: {label}...")
 
     from bot.services.rss_news import get_fresh_news
 
-    text, items, source = await get_fresh_news(user_id, topic=topic, limit=5)
+    text, items, source = await get_fresh_news(user_id, topic=search_topic, limit=5)
     if not text:
         await message.answer(
             f"Новостей по запросу «{label}» не найдено.",
