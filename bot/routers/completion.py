@@ -38,14 +38,15 @@ router = Router()
 
 
 def _is_cloud_model(model_id: str) -> bool:
-    """Only cloud model IDs from the provider allow-list are selectable."""
+    """Only exact cloud model IDs from the provider allow-list are selectable.
+
+    We do NOT accept arbitrary IDs ending in :cloud because the bot must never
+    trigger a local download on the server hardware. If a model is not in the
+    provider allow-list it is rejected outright.
+    """
     if not model_id:
         return False
-    normalized = model_id.lower().strip()
-    if normalized in CLOUD_MODELS:
-        return True
-    # Accept model names that already end with :cloud even if not in the list.
-    return normalized.endswith(":cloud")
+    return model_id.lower().strip() in CLOUD_MODELS
 
 
 def _log_warning(msg: str) -> None:
@@ -580,9 +581,10 @@ async def cmd_models(message: Message):
         print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
         return
     models = await get_installed_models()
-    model_list = "\n".join([f"- {m.name}" for m in models]) or "Нет моделей"
+    cloud_names = [m.name for m in models if _is_cloud_model(m.name)]
+    model_list = "\n".join([f"- {name}" for name in cloud_names]) or "Нет моделей"
     await message.answer(
-        f"Доступные модели:\n{model_list}", reply_markup=command_keyboard
+        f"Доступные облачные модели:\n{model_list}", reply_markup=command_keyboard
     )
 
 

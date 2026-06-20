@@ -66,7 +66,8 @@ CLOUD_MODELS = [
     "rnj-1:8b:cloud",
 ]
 
-OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud")
+_configured_model = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud").lower().strip()
+OLLAMA_MODEL = _configured_model if _configured_model in {m.lower() for m in CLOUD_MODELS} else "kimi-k2.7-code:cloud"
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", default="")
