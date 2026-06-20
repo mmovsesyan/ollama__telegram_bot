@@ -34,6 +34,7 @@ With long-term memory, reminders, web search, site monitoring, and voice recogni
 | 🌍 **Localization** | Bot asks for name and country on first launch, all times shown in your timezone |
 | ✏️ **Editing** | Edit reminder/task text or time directly in Telegram |
 | ✅ **Smart completion** | Say «готово», «сделал» or «done» about an active reminder/task — the bot will offer to close it |
+| 🛡 **Multi-user access control** | New users request access; admin approves/rejects/removes them from a single DB-backed admin panel |
 
 ---
 
@@ -165,6 +166,20 @@ Then just write or speak:
 | `/clear` | Clear chat history |
 | `/report` | Daily report |
 
+### Admin commands
+
+| Command | Description |
+|---------|-------------|
+| `/admin_requests` | List pending access requests |
+| `/admin_approve <id>` | Approve a user |
+| `/admin_reject <id>` | Reject a user |
+| `/admin_remove <id>` | Remove a user from the access list |
+| `/admin_list` | List all users |
+| `/admin_promote <id>` | Make a user an admin |
+| `/admin_demote <id>` | Remove admin rights |
+
+The first user listed in `ALLOWED_CHAT_IDS` is bootstrapped as an admin on first DB creation. If `ALLOWED_CHAT_IDS` is empty, the first user who writes `/start` can be promoted to admin manually via `/admin_promote`.
+
 ---
 
 ## ⚙️ `.env` configuration
@@ -196,7 +211,9 @@ WHISPER_COMPUTE_TYPE=default # int8, float16, default
 
 - `.env`, logs and the database are excluded from git (`.gitignore`).
 - Git history was scrubbed of secrets.
-- `ALLOWED_CHAT_IDS` restricts who can talk to the bot.
+- `ALLOWED_CHAT_IDS` bootstraps the initial admin(s) and approved users on first DB creation. After that the SQLite `users` table is the source of truth; use admin commands to manage access.
+- New users start with `pending` status and require admin approval before any bot features work.
+- Admin commands are checked against the `is_admin` flag in the DB.
 - Never commit real tokens or keys.
 
 ---

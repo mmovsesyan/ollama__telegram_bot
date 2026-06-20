@@ -20,7 +20,7 @@ from bot.keyboards.inline import (
 from bot.keyboards.reply import cancel_keyboard, command_keyboard
 from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
-from bot.security import is_allowed as _is_allowed
+from bot.security import is_admin, is_allowed as _is_allowed
 from bot.services import reminders as reminders_service
 from bot.routers.settings import cmd_settings
 from bot.services.profile import format_local
@@ -2641,7 +2641,15 @@ async def cmd_help(message: Message):
         "/models — модели\n"
         "/model — сменить модель\n"
         "/clear — очистить историю\n"
-        "/monitors — мониторы",
+        "/monitors — мониторы\n\n"
+        "🛡 *Администратору:*\n"
+        "/admin_requests — запросы на доступ\n"
+        "/admin_approve <id> — одобрить\n"
+        "/admin_reject <id> — отклонить\n"
+        "/admin_remove <id> — удалить пользователя\n"
+        "/admin_list — список пользователей\n"
+        "/admin_promote <id> — сделать админом\n"
+        "/admin_demote <id> — снять админа",
         reply_markup=command_keyboard,
         parse_mode="Markdown",
     )
@@ -2657,3 +2665,313 @@ _BUTTON_HANDLERS["🧠 Память"] = cmd_memory
 _BUTTON_HANDLERS["📚 База"] = btn_kb
 _BUTTON_HANDLERS["📊 Отчёт"] = cmd_report
 _BUTTON_HANDLERS["📒 Список"] = cmd_reminders
+
+
+# --- Admin user management ---
+
+def _admin_required(message: Message) -> bool:
+    if message.from_user is None:
+        return False
+    if not _is_allowed(message.from_user.id):
+        return False
+    if not is_admin(message.from_user.id):
+        return False
+    return True
+
+
+def _format_user_row(idx: int, user: dict) -> str:
+    status_emoji = {
+        "pending": "⏳",
+        "approved": "✅",
+        "rejected": "❌",
+        "blocked": "🚫",
+    }.get(user.get("status", "pending"), "❓")
+    admin_mark = " 👑" if user.get("is_admin") else ""
+    name = user.get("full_name") or user.get("username") or f"ID {user['user_id']}"
+    return f"{idx}. {status_emoji} `{user['user_id']}` — {name}{admin_mark}"
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_requests"))
+async def cmd_admin_requests(message: Message, state: FSMContext):
+    await state.clear()
+    if not _admin_required(message):
+        return
+
+    pending = db.get_users_by_status("pending") if db else []
+    if not pending:
+        await message.answer(
+            "Нет запросов на доступ.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    lines = ["🛡 Запросы на доступ:"]
+    for i, user in enumerate(pending, 1):
+        lines.append(_format_user_row(i, user))
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
+    )
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_list"))
+async def cmd_admin_list(message: Message, state: FSMContext):
+    await state.clear()
+    if not _admin_required(message):
+        return
+
+    users = db.get_all_users() if db else []
+    if not users:
+        await message.answer(
+            "В базе пока нет пользователей.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    lines = ["👥 Пользователи:"]
+    for i, user in enumerate(users, 1):
+        lines.append(_format_user_row(i, user))
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:"))
+async def cb_admin_action(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user is None:
+        await callback.answer("Ошибка.")
+        return
+    if not _is_allowed(callback.from_user.id) or not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Некорректная команда.")
+        return
+    _, action, target_id_str = parts
+    try:
+        target_id = int(target_id_str)
+    except ValueError:
+        await callback.answer("Некорректный ID.")
+        return
+
+    if action not in ("approve", "reject"):
+        await callback.answer("Неизвестное действие.")
+        return
+
+    target = db.get_user(target_id) if db else None
+    if target is None:
+        await callback.answer("Пользователь не найден.", show_alert=True)
+        return
+
+    new_status = "approved" if action == "approve" else "rejected"
+    ok = db.set_user_status(target_id, new_status, approved_by=callback.from_user.id) if db else False
+    if not ok:
+        await callback.answer("Не удалось обновить статус.", show_alert=True)
+        return
+
+    await callback.answer("Готово")
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    display = target.get("full_name") or target.get("username") or f"ID {target_id}"
+    await callback.message.answer(
+        f"{'✅' if action == 'approve' else '❌'} Пользователь {display} (`{target_id}`) — {new_status}.",
+        parse_mode="Markdown",
+    )
+
+    try:
+        await callback.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "✅ Доступ одобрен! Напиши /start, чтобы начать."
+                if action == "approve"
+                else "⛔ Доступ отклонён."
+            ),
+        )
+    except Exception as e:
+        logger.warning("[ADMIN] notify target failed: %s", e)
+
+
+async def _admin_set_status(message: Message, state: FSMContext, status: str):
+    await state.clear()
+    if not _admin_required(message):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            f"Укажи ID пользователя: /admin_{status} <id>",
+            reply_markup=command_keyboard,
+        )
+        return
+    try:
+        target_id = int(parts[1].strip())
+    except ValueError:
+        await message.answer("ID должен быть числом.", reply_markup=command_keyboard)
+        return
+
+    if target_id == message.from_user.id and status in ("rejected", "blocked"):
+        await message.answer(
+            "Нельзя применить это к себе.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    target = db.get_user(target_id) if db else None
+    if target is None:
+        await message.answer(
+            "Пользователь не найден.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    ok = db.set_user_status(target_id, status, approved_by=message.from_user.id) if db else False
+    if not ok:
+        await message.answer("Не удалось обновить статус.", reply_markup=command_keyboard)
+        return
+
+    await message.answer(
+        f"{'✅' if status == 'approved' else '❌' if status == 'rejected' else '🚫'} "
+        f"Пользователь `{target_id}` — {status}.",
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
+    )
+
+    try:
+        await message.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "✅ Доступ одобрен! Напиши /start, чтобы начать."
+                if status == "approved"
+                else "⛔ Доступ отклонён."
+                if status == "rejected"
+                else "🚫 Доступ заблокирован."
+            ),
+        )
+    except Exception as e:
+        logger.warning("[ADMIN] notify target failed: %s", e)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_approve"))
+async def cmd_admin_approve(message: Message, state: FSMContext):
+    await _admin_set_status(message, state, "approved")
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_reject"))
+async def cmd_admin_reject(message: Message, state: FSMContext):
+    await _admin_set_status(message, state, "rejected")
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_block"))
+async def cmd_admin_block(message: Message, state: FSMContext):
+    await _admin_set_status(message, state, "blocked")
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_remove"))
+async def cmd_admin_remove(message: Message, state: FSMContext):
+    await state.clear()
+    if not _admin_required(message):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Укажи ID пользователя: /admin_remove <id>",
+            reply_markup=command_keyboard,
+        )
+        return
+    try:
+        target_id = int(parts[1].strip())
+    except ValueError:
+        await message.answer("ID должен быть числом.", reply_markup=command_keyboard)
+        return
+
+    if target_id == message.from_user.id:
+        await message.answer(
+            "Нельзя удалить самого себя.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    target = db.get_user(target_id) if db else None
+    if target is None:
+        await message.answer(
+            "Пользователь не найден.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    ok = db.delete_user(target_id) if db else False
+    if not ok:
+        await message.answer(
+            "Не удалось удалить пользователя.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    await message.answer(
+        f"🗑 Пользователь `{target_id}` удалён из списка доступа.",
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
+    )
+
+
+async def _admin_set_admin(message: Message, state: FSMContext, is_admin_flag: bool):
+    await state.clear()
+    if not _admin_required(message):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        action_text = "сделать админом" if is_admin_flag else "снять админа"
+        await message.answer(
+            f"Укажи ID: /admin_{'promote' if is_admin_flag else 'demote'} <id>",
+            reply_markup=command_keyboard,
+        )
+        return
+    try:
+        target_id = int(parts[1].strip())
+    except ValueError:
+        await message.answer("ID должен быть числом.", reply_markup=command_keyboard)
+        return
+
+    if target_id == message.from_user.id and not is_admin_flag:
+        await message.answer(
+            "Нельзя снять админ-права с самого себя.",
+            reply_markup=command_keyboard,
+        )
+        return
+
+    target = db.get_user(target_id) if db else None
+    if target is None:
+        await message.answer("Пользователь не найден.", reply_markup=command_keyboard)
+        return
+
+    ok = db.set_user_admin(target_id, is_admin_flag) if db else False
+    if not ok:
+        await message.answer("Не удалось обновить права.", reply_markup=command_keyboard)
+        return
+
+    await message.answer(
+        f"{'👑' if is_admin_flag else '👤'} Пользователь `{target_id}` — "
+        f"{'админ' if is_admin_flag else 'обычный пользователь'}.",
+        reply_markup=command_keyboard,
+        parse_mode="Markdown",
+    )
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_promote"))
+async def cmd_admin_promote(message: Message, state: FSMContext):
+    await _admin_set_admin(message, state, True)
+
+
+@router.message(lambda m: m.text and m.text.startswith("/admin_demote"))
+async def cmd_admin_demote(message: Message, state: FSMContext):
+    await _admin_set_admin(message, state, False)

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.keyboards.reply import cancel_keyboard, command_keyboard
-from bot.security import is_allowed
+from bot.security import is_admin, is_allowed
 from bot.services.profile import resolve_timezone, now_in_tz
 from bot.states import BotStates
 
@@ -16,40 +16,107 @@ router = Router()
 db = None  # injected from bot.__init__
 
 
+async def _notify_admins(bot, text: str, reply_markup=None):
+    if db is None or bot is None:
+        return
+    admin_ids = db.get_admin_user_ids()
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(chat_id=admin_id, text=text, reply_markup=reply_markup)
+        except Exception as e:
+            logger.warning("[ADMIN_NOTIFY] failed for %s: %s", admin_id, e)
+
+
 @router.message(CommandStart())
 async def start_command(message: Message, state: FSMContext) -> None:
     """First-run onboarding asks for name and country to set timezone.
-    Returning users skip straight to the main menu."""
+    Returning approved users skip straight to the main menu.
+    New users without access see a pending/rejected message."""
     if message.from_user is None:
         return
     user_id = message.from_user.id
-    if not is_allowed(user_id):
+    username = message.from_user.username
+    full_name = message.from_user.full_name
+
+    if db:
+        db.ensure_user(user_id, username=username, full_name=full_name)
+
+    if is_allowed(user_id):
+        prefs = db.get_user_prefs(user_id) if db else None
+        if prefs and prefs.get("name") and prefs.get("timezone"):
+            await message.answer(
+                f"С возвращением, {prefs['name']}.\n"
+                f"Часовой пояс: {prefs['timezone']}\n\n"
+                "Просто **напиши** или **скажи голосом**, что нужно:\n"
+                "• «погода в Москве»\n"
+                "• «напомни через 5 минут позвонить»\n"
+                "• «задача каждое утро в 9 покажи новости»\n\n"
+                "Или используй кнопки внизу. Нажми /help для примеров.",
+                reply_markup=command_keyboard,
+                parse_mode="Markdown",
+            )
+            return
+
+        await state.clear()
+        await message.answer(
+            "Привет. Я AI-бот на базе Ollama.\n\n"
+            "Чтобы напоминания и задачи работали в твоём часовом поясе, "
+            "давай быстро настроим профиль (займёт 20 секунд).\n\n"
+            "Как тебя зовут?",
+            reply_markup=cancel_keyboard,
+        )
+        await state.set_state(BotStates.onboarding_name)
         return
 
-    prefs = db.get_user_prefs(user_id) if db else None
-    if prefs and prefs.get("name") and prefs.get("timezone"):
+    # User is not approved yet.
+    user = db.get_user(user_id) if db else None
+    status = user.get("status") if user else "pending"
+
+    if status == "rejected":
         await message.answer(
-            f"С возвращением, {prefs['name']}.\n"
-            f"Часовой пояс: {prefs['timezone']}\n\n"
-            "Просто **напиши** или **скажи голосом**, что нужно:\n"
-            "• «погода в Москве»\n"
-            "• «напомни через 5 минут позвонить»\n"
-            "• «задача каждое утро в 9 покажи новости»\n\n"
-            "Или используй кнопки внизу. Нажми /help для примеров.",
-            reply_markup=command_keyboard,
-            parse_mode="Markdown",
+            "⛔ Доступ отклонён.\n"
+            "Если ты считаешь, что это ошибка — свяжись с администратором бота.",
+            reply_markup=None,
+        )
+        return
+    if status == "blocked":
+        await message.answer(
+            "🚫 Доступ заблокирован.",
+            reply_markup=None,
         )
         return
 
-    await state.clear()
+    # pending (or missing record): show request sent and notify admins.
+    display = full_name or username or f"ID {user_id}"
     await message.answer(
-        "Привет. Я AI-бот на базе Ollama.\n\n"
-        "Чтобы напоминания и задачи работали в твоём часовом поясе, "
-        "давай быстро настроим профиль (займёт 20 секунд).\n\n"
-        "Как тебя зовут?",
-        reply_markup=cancel_keyboard,
+        "👋 Привет!\n\n"
+        "Доступ к боту требует одобрения администратора. "
+        "Я уже отправил запрос — ожидай решения.",
+        reply_markup=None,
     )
-    await state.set_state(BotStates.onboarding_name)
+
+    try:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin:approve:{user_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin:reject:{user_id}"),
+        )
+        markup = builder.as_markup()
+    except Exception:
+        markup = None
+
+    await _notify_admins(
+        message.bot,
+        f"🛡 Новый запрос на доступ\n"
+        f"Пользователь: {display}\n"
+        f"ID: `{user_id}`\n"
+        f"Username: @{username or '-'}\n"
+        f"Статус: {status}",
+        reply_markup=markup,
+    )
 
 
 @router.message(BotStates.onboarding_name)

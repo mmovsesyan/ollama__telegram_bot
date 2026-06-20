@@ -12,7 +12,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 import aiohttp
 from datetime import datetime, timezone
 
-COMMANDS = [
+BASE_COMMANDS = [
     BotCommand(command="start", description="Приветствие и меню"),
     BotCommand(command="help", description="Примеры и команды"),
     BotCommand(command="remind", description="Добавить напоминание"),
@@ -37,6 +37,16 @@ COMMANDS = [
     BotCommand(command="digest", description="Вечерний дайджест сейчас"),
 ]
 
+ADMIN_COMMANDS = [
+    BotCommand(command="admin_requests", description="Запросы на доступ"),
+    BotCommand(command="admin_approve", description="Одобрить пользователя"),
+    BotCommand(command="admin_reject", description="Отклонить пользователя"),
+    BotCommand(command="admin_remove", description="Удалить пользователя"),
+    BotCommand(command="admin_list", description="Список пользователей"),
+    BotCommand(command="admin_promote", description="Сделать админом"),
+    BotCommand(command="admin_demote", description="Снять админа"),
+]
+
 
 async def main() -> None:
     # Pre validate required model and overall ollama health.
@@ -47,13 +57,6 @@ async def main() -> None:
     from bot.routers import start, completion, cron, settings
     from bot.handlers import smart as smart_handler
     from bot.handlers import voice as voice_handler
-
-    # Set Telegram menu commands
-    try:
-        await aiogram_bot.set_my_commands(COMMANDS, scope=BotCommandScopeAllPrivateChats())
-        print("[BOT] Menu commands registered")
-    except Exception as e:
-        print(f"[BOT] Failed to set commands: {e}")
 
     # Init database
     db = Database(DB_PATH)
@@ -92,6 +95,20 @@ async def main() -> None:
     images_service.db = db
     digest_service.db = db
     retention_service.db = db
+
+    # Inject DB into the security module so authorization checks hit the DB.
+    from bot import security as security_module
+    security_module.db = db
+
+    # Set Telegram menu commands. Admins see extra commands.
+    try:
+        commands = list(BASE_COMMANDS)
+        if db.get_admin_user_ids():
+            commands.extend(ADMIN_COMMANDS)
+        await aiogram_bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+        print("[BOT] Menu commands registered")
+    except Exception as e:
+        print(f"[BOT] Failed to set commands: {e}")
 
     # Order matters: explicit cron commands and FSM states must be checked
     # before the smart free-form text handler. completion.router goes BEFORE

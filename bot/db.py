@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+from bot.settings import ALLOWED_CHAT_IDS as _ALLOWED_CHAT_IDS
 
 class Database:
     def __init__(self, db_path: str):
@@ -13,6 +15,11 @@ class Database:
             self.backfill_memories_fts()
         except Exception:
             pass
+
+    def _read_allowed_chat_ids(self) -> str:
+        """Read env allow-list fresh via module attribute, not a local binding."""
+        import bot.settings as settings_module
+        return getattr(settings_module, "ALLOWED_CHAT_IDS", "") or ""
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -94,6 +101,21 @@ class Database:
                 conn.execute("ALTER TABLE user_prefs ADD COLUMN retention_days INTEGER DEFAULT 90")
             except sqlite3.OperationalError:
                 pass
+            # New users/access-control table.
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    full_name TEXT,
+                    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','blocked')),
+                    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    approved_by INTEGER,
+                    is_admin INTEGER DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+                CREATE INDEX IF NOT EXISTS idx_users_admin ON users(is_admin);
+            """)
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +283,28 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id, created_at);
             """)
+            self._bootstrap_users_from_env(conn)
+
+    def _bootstrap_users_from_env(self, conn: sqlite3.Connection) -> None:
+        """If ALLOWED_CHAT_IDS is set, seed the users table with approved users
+        and make the first listed ID an admin. Does nothing if users already exist.
+        """
+        raw = self._read_allowed_chat_ids()
+        if not raw:
+            return
+        cursor = conn.execute("SELECT 1 FROM users LIMIT 1")
+        if cursor.fetchone():
+            return
+        ids = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        if not ids:
+            return
+        for i, uid in enumerate(ids):
+            is_admin = 1 if i == 0 else 0
+            conn.execute(
+                "INSERT INTO users (user_id, status, is_admin, approved_by) VALUES (?, 'approved', ?, ?)",
+                (uid, is_admin, uid if is_admin else None),
+            )
+        conn.commit()
 
     def get_or_create_active_session(self, user_id: int, model: str) -> int:
         with sqlite3.connect(self.db_path) as conn:
@@ -862,4 +906,132 @@ class Database:
         """Return every user_id that appears in user_prefs."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("SELECT user_id FROM user_prefs")
+            return [row[0] for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------------
+    # User access control
+    # ------------------------------------------------------------------
+
+    def ensure_user(
+        self,
+        user_id: int,
+        username: str | None = None,
+        full_name: str | None = None,
+        status: str | None = None,
+    ) -> dict:
+        """Insert or update a users row and return the current record."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                record = dict(row)
+                fields: list[str] = []
+                values: list[Any] = []
+                if username is not None:
+                    fields.append("username = ?")
+                    values.append(username)
+                if full_name is not None:
+                    fields.append("full_name = ?")
+                    values.append(full_name)
+                if status is not None and record["status"] != status:
+                    fields.append("status = ?")
+                    values.append(status)
+                if fields:
+                    values.append(user_id)
+                    conn.execute(
+                        f"UPDATE users SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                        values,
+                    )
+                    conn.commit()
+                    cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                    record = dict(cursor.fetchone())
+                return record
+
+            # Fresh record: status defaults to pending if not provided.
+            insert_status = status or "pending"
+            conn.execute(
+                """
+                INSERT INTO users (user_id, username, full_name, status, requested_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, username, full_name, insert_status),
+            )
+            conn.commit()
+            cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            return dict(cursor.fetchone())
+
+    def get_user(self, user_id: int) -> dict | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def is_user_allowed(self, user_id: int) -> bool:
+        user = self.get_user(user_id)
+        return bool(user and user.get("status") == "approved")
+
+    def is_user_admin(self, user_id: int) -> bool:
+        user = self.get_user(user_id)
+        return bool(user and user.get("is_admin"))
+
+    def set_user_status(
+        self,
+        user_id: int,
+        status: str,
+        approved_by: int | None = None,
+    ) -> bool:
+        if status not in ("pending", "approved", "rejected", "blocked"):
+            raise ValueError(f"Invalid user status: {status}")
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE users
+                SET status = ?, approved_by = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (status, approved_by, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def set_user_admin(self, user_id: int, is_admin: bool) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE users SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                (1 if is_admin else 0, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_user(self, user_id: int) -> bool:
+        """Remove the access-control record. User data in other tables is kept
+        for audit/retention; the user simply loses access.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_users_by_status(self, status: str) -> list[dict]:
+        if status not in ("pending", "approved", "rejected", "blocked"):
+            raise ValueError(f"Invalid user status: {status}")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM users WHERE status = ? ORDER BY requested_at DESC",
+                (status,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_all_users(self) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM users ORDER BY requested_at DESC")
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_admin_user_ids(self) -> list[int]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT user_id FROM users WHERE is_admin = 1")
             return [row[0] for row in cursor.fetchall()]
