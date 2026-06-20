@@ -26,48 +26,76 @@ OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST", default="https://api.ollama.com")
 
 # Cloud-only model allow-list. Local models (e.g. llama3.2:latest) are rejected
 # by /model because the bot runs against api.ollama.com where only cloud IDs are
-# available and billing is per-token. Keep this list in sync with the provider.
+# available and billing is per-token. Entries are stored as base names without
+# the :cloud suffix; the bot normalizes inputs before checking this list.
 # Built from the provider model list dated 2026-06-18.
 CLOUD_MODELS = [
-    "deepseek-v3.1:671b:cloud",
-    "deepseek-v3.2:cloud",
-    "deepseek-v4-flash:cloud",
-    "deepseek-v4-pro:cloud",
-    "devstral-2:123b:cloud",
-    "devstral-small-2:24b:cloud",
-    "gemini-3-flash-preview:cloud",
-    "gemma3:12b:cloud",
-    "gemma3:27b:cloud",
-    "gemma3:4b:cloud",
-    "gemma4:31b:cloud",
-    "glm-4.7:cloud",
-    "glm-5:cloud",
-    "glm-5.1:cloud",
-    "glm-5.2:cloud",
-    "gpt-oss:120b:cloud",
-    "gpt-oss:20b:cloud",
-    "kimi-k2.5:cloud",
-    "kimi-k2.6:cloud",
-    "kimi-k2.7-code:cloud",
-    "minimax-m2.1:cloud",
-    "minimax-m2.5:cloud",
-    "minimax-m2.7:cloud",
-    "minimax-m3:cloud",
-    "ministral-3:14b:cloud",
-    "ministral-3:3b:cloud",
-    "ministral-3:8b:cloud",
-    "mistral-large-3:675b:cloud",
-    "nemotron-3-nano:30b:cloud",
-    "nemotron-3-super:cloud",
-    "nemotron-3-ultra:cloud",
-    "qwen3-coder-next:cloud",
-    "qwen3-coder:480b:cloud",
-    "qwen3.5:397b:cloud",
-    "rnj-1:8b:cloud",
+    "deepseek-v3.1:671b",
+    "deepseek-v3.2",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "devstral-2:123b",
+    "devstral-small-2:24b",
+    "gemini-3-flash-preview",
+    "gemma3:12b",
+    "gemma3:27b",
+    "gemma3:4b",
+    "gemma4:31b",
+    "glm-4.7",
+    "glm-5",
+    "glm-5.1",
+    "glm-5.2",
+    "gpt-oss:120b",
+    "gpt-oss:20b",
+    "kimi-k2.5",
+    "kimi-k2.6",
+    "kimi-k2.7-code",
+    "minimax-m2.1",
+    "minimax-m2.5",
+    "minimax-m2.7",
+    "minimax-m3",
+    "ministral-3:14b",
+    "ministral-3:3b",
+    "ministral-3:8b",
+    "mistral-large-3:675b",
+    "nemotron-3-nano:30b",
+    "nemotron-3-super",
+    "nemotron-3-ultra",
+    "qwen3-coder-next",
+    "qwen3-coder:480b",
+    "qwen3.5:397b",
+    "rnj-1:8b",
 ]
 
-_configured_model = os.getenv("OLLAMA_BOT_MODEL", default="kimi-k2.7-code:cloud").lower().strip()
-OLLAMA_MODEL = _configured_model if _configured_model in {m.lower() for m in CLOUD_MODELS} else "kimi-k2.7-code:cloud"
+# Normalised lookup set for fast membership checks.
+_CLOUD_MODEL_SET = {m.lower() for m in CLOUD_MODELS}
+
+
+def normalize_model_id(model_id: str) -> str:
+    """Return the canonical base model name used in CLOUD_MODELS.
+
+    Strips the :cloud/:latest suffixes so the same model can be referred to as
+    'kimi-k2.7-code', 'kimi-k2.7-code:cloud' or 'kimi-k2.7-code:latest'.
+    """
+    if not model_id:
+        return ""
+    normalized = model_id.lower().strip()
+    for suffix in (":cloud", ":latest"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+    return normalized
+
+
+_default_model = "kimi-k2.7-code"
+_configured_model = normalize_model_id(
+    os.getenv("OLLAMA_BOT_MODEL", default=_default_model)
+)
+OLLAMA_MODEL = (
+    _configured_model
+    if _configured_model in _CLOUD_MODEL_SET
+    else _default_model
+)
+
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", default="")

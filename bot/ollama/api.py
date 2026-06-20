@@ -15,7 +15,7 @@ from typing import Any, AsyncGenerator, Optional
 import aiohttp
 
 from bot.services.ollama_semaphore import ollama_semaphore
-from bot.settings import OLLAMA_API_HOST, OLLAMA_API_KEY, OLLAMA_KEEP_ALIVE
+from bot.settings import OLLAMA_API_HOST, OLLAMA_API_KEY, OLLAMA_KEEP_ALIVE, normalize_model_id
 
 from .dto import (
     OllamaChatMessage,
@@ -124,11 +124,9 @@ async def get_installed_models(*, cache_ttl: float | None = None) -> list[Ollama
 async def model_is_installed(model_id: str) -> bool:
     if not model_id:
         return False
+    target = normalize_model_id(model_id)
     models = await get_installed_models()
-    for model in models:
-        if model.name in (model_id, f"{model_id}:latest"):
-            return True
-    return False
+    return any(normalize_model_id(model.name) == target for model in models)
 
 
 async def ollama_is_healthy() -> bool:

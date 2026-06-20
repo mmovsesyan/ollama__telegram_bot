@@ -29,6 +29,7 @@ from bot.settings import (
     START_USER_MESSAGE,
     SUMMARY_PROMPT,
     SYSTEM_MESSAGE,
+    normalize_model_id,
 )
 from bot.states import BotStates
 
@@ -37,16 +38,19 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def _is_cloud_model(model_id: str) -> bool:
-    """Only exact cloud model IDs from the provider allow-list are selectable.
+_CLOUD_MODEL_SET = {normalize_model_id(m) for m in CLOUD_MODELS}
 
-    We do NOT accept arbitrary IDs ending in :cloud because the bot must never
-    trigger a local download on the server hardware. If a model is not in the
-    provider allow-list it is rejected outright.
+
+def _is_cloud_model(model_id: str) -> bool:
+    """Only base cloud model IDs from the provider allow-list are selectable.
+
+    Accepts inputs with or without the :cloud/:latest suffix, but rejects any
+    base name that is not in CLOUD_MODELS. This prevents local models from
+    being selected or downloaded on the server hardware.
     """
     if not model_id:
         return False
-    return model_id.lower().strip() in CLOUD_MODELS
+    return normalize_model_id(model_id) in _CLOUD_MODEL_SET
 
 
 def _log_warning(msg: str) -> None:
