@@ -1,8 +1,10 @@
+import asyncio
 import html
 import ipaddress
 import json
 import logging
 import re
+import socket
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -168,6 +170,9 @@ def _is_safe_monitor_url(url: str) -> tuple[bool, str]:
     IP literals to prevent SSRF against internal services (Ollama, cloud metadata,
     etc.). Domain names are accepted on trust; a determined attacker can still
     point a public DNS name at an internal IP, so this is a best-effort guard.
+
+    For synchronous call-sites (tests, quick checks) no DNS resolution is
+    performed. Use `_is_safe_monitor_url_async()` before issuing a request.
     """
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
@@ -191,6 +196,61 @@ def _is_safe_monitor_url(url: str) -> tuple[bool, str]:
             return False, "внутренние IP-адреса запрещены"
     except ValueError:
         pass
+    return True, ""
+
+
+async def _is_safe_monitor_url_async(url: str) -> tuple[bool, str]:
+    """Async variant of `_is_safe_monitor_url` that also resolves the hostname.
+
+    DNS rebinding / bypass protection: the hostname is resolved in an executor
+    and any returned address that is loopback/private/link-local/reserved/
+    multicast causes the URL to be rejected. All addresses must be public.
+    """
+    safe, reason = _is_safe_monitor_url(url)
+    if not safe:
+        return False, reason
+
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return False, "не удалось определить хост"
+
+    try:
+        ipaddress.ip_address(host)
+        return True, ""  # already validated by _is_safe_monitor_url
+    except ValueError:
+        pass  # hostname, need to resolve
+
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await asyncio.wait_for(
+            loop.run_in_executor(None, socket.getaddrinfo, host, None),
+            timeout=5,
+        )
+    except asyncio.TimeoutError:
+        return False, "DNS таймаут"
+    except socket.gaierror as exc:
+        return False, f"не удалось разрешить имя: {exc.strerror or exc}"
+    except OSError as exc:
+        return False, f"ошибка разрешения имени: {exc}"
+
+    if not infos:
+        return False, "имя не разрешается"
+
+    for _family, _socktype, _proto, _canonname, sockaddr in infos:
+        ip = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            return False, f"хост разрешается в запрещённый IP: {ip}"
     return True, ""
 
 
@@ -1165,7 +1225,7 @@ async def _process_monitor_add(
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
 
-    safe, reason = _is_safe_monitor_url(url)
+    safe, reason = await _is_safe_monitor_url_async(url)
     if not safe:
         await message.answer(
             f"⚠️ URL не разрешён: {reason}",

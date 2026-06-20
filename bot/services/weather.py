@@ -1,6 +1,8 @@
 """Weather lookup with wttr.in primary and Open-Meteo fallback."""
 
 import json
+from urllib.parse import quote
+
 import aiohttp
 
 
@@ -27,7 +29,7 @@ def _weather_emoji(desc: str) -> str:
 
 async def _get_wttr(city: str) -> tuple[str | None, str | None]:
     async with aiohttp.ClientSession() as session:
-        url = f"https://wttr.in/{city}?format=j1"
+        url = f"https://wttr.in/{quote(city, safe='')}?format=j1"
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
                 return None, f"HTTP {resp.status}"
@@ -48,9 +50,10 @@ async def _get_wttr(city: str) -> tuple[str | None, str | None]:
             wind_dir = current.get("winddir16Point", "")
             humidity = current.get("humidity", "?")
             pressure = current.get("pressure", "?")
-            visibility = current.get("visibility", "?")
+            current.get("visibility", "?")
             text = (
-                f"{emoji} {area_name}" + (f", {country}\n" if country else "\n")
+                f"{emoji} {area_name}"
+                + (f", {country}\n" if country else "\n")
                 + (f"{desc}\n" if desc else "")
                 + f"🌡 {temp}° (ощущается {feels}°)\n"
                 f"💨 {wind} км/ч{f' {wind_dir}' if wind_dir else ''}   "
@@ -63,8 +66,13 @@ async def _get_wttr(city: str) -> tuple[str | None, str | None]:
 
 async def _get_open_meteo(city: str) -> tuple[str | None, str | None]:
     async with aiohttp.ClientSession() as session:
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=ru"
-        async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=10)) as geo_resp:
+        geo_url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            f"name={quote(city, safe='')}&count=1&language=ru"
+        )
+        async with session.get(
+            geo_url, timeout=aiohttp.ClientTimeout(total=10)
+        ) as geo_resp:
             if geo_resp.status != 200:
                 return None, f"Geocoding HTTP {geo_resp.status}"
             geo = await geo_resp.json()
@@ -83,7 +91,9 @@ async def _get_open_meteo(city: str) -> tuple[str | None, str | None]:
             f"temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,"
             f"wind_speed_10m,wind_direction_10m,pressure_msl"
         )
-        async with session.get(w_url, timeout=aiohttp.ClientTimeout(total=10)) as w_resp:
+        async with session.get(
+            w_url, timeout=aiohttp.ClientTimeout(total=10)
+        ) as w_resp:
             if w_resp.status != 200:
                 return None, f"Weather HTTP {w_resp.status}"
             w = await w_resp.json()
@@ -97,7 +107,8 @@ async def _get_open_meteo(city: str) -> tuple[str | None, str | None]:
             desc = _WMO_DESC.get(code, "")
             emoji = _wmo_emoji(code)
             text = (
-                f"{emoji} {name}" + (f", {country}\n" if country else "\n")
+                f"{emoji} {name}"
+                + (f", {country}\n" if country else "\n")
                 + (f"{desc.lower()}\n" if desc else "")
                 + f"🌡 {temp}° (ощущается {feels}°)\n"
                 f"💨 {wind} км/ч   "
@@ -123,15 +134,30 @@ async def get_weather(city: str) -> tuple[str | None, str | None]:
 
 
 _WMO_DESC = {
-    0: "Ясно", 1: "Преимущественно ясно", 2: "Переменная облачность", 3: "Пасмурно",
-    45: "Туман", 48: "Изморозь",
-    51: "Слабая морось", 53: "Морось", 55: "Сильная морось",
-    61: "Слабый дождь", 63: "Дождь", 65: "Сильный дождь",
-    71: "Слабый снег", 73: "Снег", 75: "Сильный снег",
+    0: "Ясно",
+    1: "Преимущественно ясно",
+    2: "Переменная облачность",
+    3: "Пасмурно",
+    45: "Туман",
+    48: "Изморозь",
+    51: "Слабая морось",
+    53: "Морось",
+    55: "Сильная морось",
+    61: "Слабый дождь",
+    63: "Дождь",
+    65: "Сильный дождь",
+    71: "Слабый снег",
+    73: "Снег",
+    75: "Сильный снег",
     77: "Снежная крупа",
-    80: "Кратковременный дождь", 81: "Ливень", 82: "Сильный ливень",
-    85: "Кратковременный снег", 86: "Сильный снег",
-    95: "Гроза", 96: "Гроза с градом", 99: "Сильная гроза с градом",
+    80: "Кратковременный дождь",
+    81: "Ливень",
+    82: "Сильный ливень",
+    85: "Кратковременный снег",
+    86: "Сильный снег",
+    95: "Гроза",
+    96: "Гроза с градом",
+    99: "Сильная гроза с градом",
 }
 
 
@@ -154,6 +180,7 @@ def _wmo_emoji(code: int) -> str:
         return "⛈️"
     return "🌡️"
 
+
 _RU_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
@@ -171,7 +198,10 @@ async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | 
     wind, humidity per day. Open-Meteo, no API key."""
     days = max(1, min(days, 16))
     async with aiohttp.ClientSession() as session:
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=ru"
+        geo_url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            f"name={quote(city, safe='')}&count=1&language=ru"
+        )
         async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=15)) as r:
             if r.status != 200:
                 return None, f"Geocoding HTTP {r.status}"
@@ -203,6 +233,7 @@ async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | 
         return None, "Нет данных прогноза"
 
     from datetime import date
+
     location = name + (f", {country}" if country else "")
     lines = [f"📅 {location} — {len(dates)} {_days_word(len(dates))}", ""]
     for i, ds in enumerate(dates):
@@ -219,7 +250,9 @@ async def _forecast_open_meteo(city: str, days: int) -> tuple[str | None, str | 
         pprob = daily.get("precipitation_probability_max", [0])[i] or 0
         # Show precipitation chance only when meaningful, otherwise drop it.
         suffix = f" {pprob:.0f}%" if pprob >= 30 else ""
-        temp = f"{tmin:.0f}…{tmax:.0f}°" if tmin is not None and tmax is not None else "—"
+        temp = (
+            f"{tmin:.0f}…{tmax:.0f}°" if tmin is not None and tmax is not None else "—"
+        )
         lines.append(f"{emoji} {label}   {temp}   {desc.lower()}{suffix}")
     lines.append("")
     lines.append("Источник: Open-Meteo")
@@ -232,7 +265,7 @@ async def _forecast_wttr(city: str, days: int) -> tuple[str | None, str | None]:
     is slow or down."""
     days = max(1, min(days, 3))
     async with aiohttp.ClientSession() as session:
-        url = f"https://wttr.in/{city}?format=j1"
+        url = f"https://wttr.in/{quote(city, safe='')}?format=j1"
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
             if resp.status != 200:
                 return None, f"HTTP {resp.status}"
@@ -250,6 +283,7 @@ async def _forecast_wttr(city: str, days: int) -> tuple[str | None, str | None]:
         return None, "Нет данных прогноза"
 
     from datetime import date
+
     location = name + (f", {country}" if country else "")
     lines = [f"📅 {location} — {len(forecast)} {_days_word(len(forecast))}", ""]
     for day in forecast:

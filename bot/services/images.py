@@ -15,7 +15,7 @@ from typing import Any
 
 from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
-from bot.settings import IMAGES_DIR, OLLAMA_MODEL, VISION_MODEL
+from bot.settings import OLLAMA_MODEL, VISION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,9 @@ async def _vision_query(image_path: str, prompt: str, model: str | None = None) 
     output = ""
     try:
         async with asyncio.timeout(120):
-            async for is_done, chunk in generate_chat_completion(messages, model, temperature=0.3):
+            async for is_done, chunk in generate_chat_completion(
+                messages, model, temperature=0.3
+            ):
                 if is_done:
                     break
                 if isinstance(chunk, OllamaErrorChunk):
@@ -169,15 +171,27 @@ def delete_image(image_id: int, user_id: int | None = None) -> bool:
     image = db.get_image(image_id, user_id=user_id)
     if not image:
         return False
-    if image.get("local_path") and Path(image["local_path"]).exists():
-        try:
-            os.unlink(image["local_path"])
-        except Exception as e:
-            logger.warning("[IMAGES] failed to remove file %s: %s", image["local_path"], e)
+    local_path = image.get("local_path")
+    if local_path and Path(local_path).exists():
+        if user_id is not None and db._is_path_inside_user_dir(local_path, user_id):
+            try:
+                os.unlink(local_path)
+            except Exception as e:
+                logger.warning("[IMAGES] failed to remove file %s: %s", local_path, e)
+        elif user_id is None:
+            logger.warning(
+                "[IMAGES] delete_image called without user_id; skipping file removal"
+            )
+        else:
+            logger.warning(
+                "[IMAGES] refusing to delete path outside user dir: %s", local_path
+            )
     return db.delete_image(image_id, user_id=user_id)
 
 
-async def answer_question(user_id: int, image_id: int, question: str, model: str | None = None) -> str:
+async def answer_question(
+    user_id: int, image_id: int, question: str, model: str | None = None
+) -> str:
     """Answer a user question about a previously saved image using a vision model."""
     if db is None:
         return "⚠️ База данных недоступна."
@@ -222,6 +236,7 @@ async def save_description_to_memory(user_id: int, image_id: int) -> str:
     db.add_memory(user_id, "fact", description, source="image")
     try:
         from bot.routers import completion
+
         completion.refresh_system_prompt(user_id)
     except Exception:
         pass

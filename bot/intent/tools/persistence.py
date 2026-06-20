@@ -72,9 +72,9 @@ class MonitorTool(BaseTool):
         if "://" not in url:
             url = f"http://{url}"
         # Late import to avoid circular imports at module load time.
-        from bot.routers.cron import _is_safe_monitor_url
+        from bot.routers.cron import _is_safe_monitor_url_async
 
-        safe, reason = _is_safe_monitor_url(url)
+        safe, reason = await _is_safe_monitor_url_async(url)
         if not safe:
             return ToolResult(text=f"⚠️ URL не разрешён: {reason}", success=False)
         # Clamp interval: never let APScheduler poll faster than once a minute,

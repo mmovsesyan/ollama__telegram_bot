@@ -158,9 +158,69 @@ async def test_process_monitor_add_accepts_public_url(fresh_db):
     mock_session.get = MagicMock(return_value=mock_response)
 
     with patch.object(cron_module.aiohttp, "ClientSession", return_value=mock_session):
-        await cron_module._process_monitor_add(msg, "Test", "http://example.com", 300)
+        with patch.object(
+            cron_module,
+            "_is_safe_monitor_url_async",
+            new=AsyncMock(return_value=(True, "")),
+        ):
+            await cron_module._process_monitor_add(
+                msg, "Test", "http://example.com", 300
+            )
 
     monitors = fresh_db.get_monitors(42)
     assert len(monitors) == 1
     assert monitors[0]["url"] == "http://example.com"
     msg.answer.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_monitor_add_async_dns_rejects_private_resolution(fresh_db):
+    msg = _message(text="/monitor_add Test http://rebind.example")
+
+    with patch.object(
+        cron_module,
+        "_is_safe_monitor_url_async",
+        new=AsyncMock(return_value=(False, "хост разрешается в запрещённый IP")),
+    ):
+        await cron_module._process_monitor_add(
+            msg, "Test", "http://rebind.example", 300
+        )
+
+    assert fresh_db.get_monitors(42) == []
+    msg.answer.assert_awaited()
+    text = msg.answer.await_args.args[0]
+    assert "URL не разрешён" in text
+    assert "запрещённый IP" in text
+
+
+@pytest.mark.asyncio
+async def test_is_safe_monitor_url_async_blocks_private_dns_resolution():
+    import socket
+
+    with patch.object(
+        socket,
+        "getaddrinfo",
+        return_value=[(socket.AF_INET, 0, 0, "", ("127.0.0.1", 0))],
+    ):
+        ok, reason = await cron_module._is_safe_monitor_url_async(
+            "http://rebind.example"
+        )
+    assert ok is False
+    assert "127.0.0.1" in reason
+
+
+@pytest.mark.asyncio
+async def test_is_safe_monitor_url_async_allows_public_dns_resolution():
+    import socket
+
+    with patch.object(
+        socket,
+        "getaddrinfo",
+        return_value=[
+            (socket.AF_INET, 0, 0, "", ("93.184.216.34", 0)),
+            (socket.AF_INET6, 0, 0, "", ("2606:2800:220:1:248:1893:25c8:1946", 0)),
+        ],
+    ):
+        ok, reason = await cron_module._is_safe_monitor_url_async("http://example.com")
+    assert ok is True
+    assert reason == ""

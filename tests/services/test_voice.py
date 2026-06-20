@@ -39,7 +39,7 @@ async def test_transcribe_voice_file_too_large(fake_voice):
 
 
 @pytest.mark.asyncio
-async def test_transcribe_voice_success(fake_voice, monkeypatch):
+async def test_transcribe_voice_success(fake_voice, monkeypatch, tmp_path):
     fake_bot = MagicMock()
     fake_bot.get_file = AsyncMock(return_value=MagicMock(file_path="voice/file.ogg"))
     fake_bot.download_file = AsyncMock()
@@ -51,7 +51,10 @@ async def test_transcribe_voice_success(fake_voice, monkeypatch):
     monkeypatch.setattr(voice_module, "_whisper_model_instance", fake_model)
     monkeypatch.setattr(voice_module, "_WHISPER_AVAILABLE", True)
 
-    with patch.object(voice_module, "_download_tg_file", new=AsyncMock(return_value=("/tmp/voice.ogg", ""))):
+    local_path = str(tmp_path / "voice.ogg")
+    with patch.object(
+        voice_module, "_download_tg_file", new=AsyncMock(return_value=(local_path, ""))
+    ):
         text, error = await voice_module.transcribe_voice(fake_bot, fake_voice)
 
     assert error is None
@@ -59,7 +62,7 @@ async def test_transcribe_voice_success(fake_voice, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_transcribe_voice_ffmpeg_error(fake_voice, monkeypatch):
+async def test_transcribe_voice_ffmpeg_error(fake_voice, monkeypatch, tmp_path):
     fake_bot = MagicMock()
     fake_bot.get_file = AsyncMock(return_value=MagicMock(file_path="voice/file.ogg"))
     fake_bot.download_file = AsyncMock()
@@ -69,7 +72,10 @@ async def test_transcribe_voice_ffmpeg_error(fake_voice, monkeypatch):
     monkeypatch.setattr(voice_module, "_whisper_model_instance", fake_model)
     monkeypatch.setattr(voice_module, "_WHISPER_AVAILABLE", True)
 
-    with patch.object(voice_module, "_download_tg_file", new=AsyncMock(return_value=("/tmp/voice.ogg", ""))):
+    local_path = str(tmp_path / "voice.ogg")
+    with patch.object(
+        voice_module, "_download_tg_file", new=AsyncMock(return_value=(local_path, ""))
+    ):
         text, error = await voice_module.transcribe_voice(fake_bot, fake_voice)
 
     assert text is None
@@ -108,7 +114,6 @@ async def test_send_voice_reply_enabled_but_no_tts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_voice_reply_with_local_tts(monkeypatch, tmp_path):
-    import os
     voice_module.db = MagicMock()
     voice_module.db.get_user_prefs.return_value = {"voice_output_enabled": 1}
 

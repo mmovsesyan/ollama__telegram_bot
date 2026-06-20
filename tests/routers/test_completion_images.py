@@ -1,5 +1,4 @@
 import sys
-import tempfile
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -74,9 +73,15 @@ async def test_handle_photo_processes_and_replies(fresh_db):
     fake_file = MagicMock()
     fake_file.file_path = "photos/big.jpg"
 
-    with patch.object(completion_module.aiogram_bot, "get_file", new=AsyncMock(return_value=fake_file)):
-        with patch.object(completion_module.aiogram_bot, "download_file", new=AsyncMock()) as download_mock:
-            download_mock.side_effect = lambda _, dest: Path(dest).write_bytes(_make_jpeg_bytes())
+    with patch.object(
+        completion_module.aiogram_bot, "get_file", new=AsyncMock(return_value=fake_file)
+    ):
+        with patch.object(
+            completion_module.aiogram_bot, "download_file", new=AsyncMock()
+        ) as download_mock:
+            download_mock.side_effect = lambda _, dest: Path(dest).write_bytes(
+                _make_jpeg_bytes()
+            )
             with patch.object(
                 images_module,
                 "describe_image",
@@ -110,8 +115,8 @@ async def test_handle_photo_no_photos_ignores():
 
 
 @pytest.mark.asyncio
-async def test_cb_save_image_to_memory(fresh_db):
-    path = Path(tempfile.mktemp(suffix=".jpg"))
+async def test_cb_save_image_to_memory(fresh_db, tmp_path):
+    path = tmp_path / "mem_test.jpg"
     path.write_bytes(_make_jpeg_bytes())
     image_id = fresh_db.add_image(
         user_id=42,
@@ -139,7 +144,9 @@ async def test_cb_save_image_to_memory(fresh_db):
         cb.answer.assert_awaited_once()
         msg.edit_text.assert_awaited_once()
         assert "Сохранил" in msg.edit_text.await_args.args[0]
-        assert any("red bicycle" in m.get("content", "") for m in fresh_db.get_memories(42))
+        assert any(
+            "red bicycle" in m.get("content", "") for m in fresh_db.get_memories(42)
+        )
     finally:
         if original is None:
             sys.modules.pop("bot.routers.completion", None)

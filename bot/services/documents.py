@@ -152,7 +152,9 @@ def _detect_suffix(filename: str | None, mime_type: str | None) -> str:
     return mime_to_suffix.get((mime_type or "").lower(), ".bin")
 
 
-def _chunk_text(text: str, chunk_size: int | None = None, overlap: int | None = None) -> list[str]:
+def _chunk_text(
+    text: str, chunk_size: int | None = None, overlap: int | None = None
+) -> list[str]:
     """Split text into overlapping chunks on paragraph/word boundaries."""
     chunk_size = chunk_size or DOCUMENT_CHUNK_SIZE
     overlap = overlap if overlap is not None else DOCUMENT_CHUNK_OVERLAP
@@ -263,7 +265,11 @@ async def summarize_text(text: str) -> str:
     if not summary:
         # Fallback: first few paragraphs if LLM failed.
         paragraphs = [p for p in text.split("\n") if p.strip()][:3]
-        summary = "\n".join(paragraphs) if paragraphs else "[Не удалось сгенерировать краткое содержание]"
+        summary = (
+            "\n".join(paragraphs)
+            if paragraphs
+            else "[Не удалось сгенерировать краткое содержание]"
+        )
     return summary
 
 
@@ -288,7 +294,9 @@ async def save_document(
     safe_name = Path(filename or "document").name
     suffix = _detect_suffix(filename, mime_type)
     docs_dir = _user_docs_dir(base_dir, user_id)
-    local_filename = f"{telegram_file_id or 'local'}_{safe_name}" if telegram_file_id else safe_name
+    local_filename = (
+        f"{telegram_file_id or 'local'}_{safe_name}" if telegram_file_id else safe_name
+    )
     local_path = str(docs_dir / local_filename)
 
     # Avoid overwriting by appending a counter.
@@ -348,11 +356,24 @@ def delete_document(doc_id: int, user_id: int | None = None) -> bool:
     doc = db.get_document(doc_id, user_id=user_id)
     if not doc:
         return False
-    if doc.get("local_path") and Path(doc["local_path"]).exists():
-        try:
-            os.unlink(doc["local_path"])
-        except Exception as e:
-            logger.warning("[DOCS] failed to remove file %s: %s", doc["local_path"], e)
+    local_path = doc.get("local_path")
+    if local_path and Path(local_path).exists():
+        # Defensive guard: only delete files that belong to the user.
+        if user_id is not None and db._is_path_inside_user_dir(local_path, user_id):
+            try:
+                os.unlink(local_path)
+            except Exception as e:
+                logger.warning("[DOCS] failed to remove file %s: %s", local_path, e)
+        elif user_id is None:
+            # Legacy/internal callers may pass no user_id (e.g. cascade cleanup
+            # via Database.delete_user). Refuse to delete an unvalidated path.
+            logger.warning(
+                "[DOCS] delete_document called without user_id; skipping file removal"
+            )
+        else:
+            logger.warning(
+                "[DOCS] refusing to delete path outside user dir: %s", local_path
+            )
     return db.delete_document(doc_id, user_id=user_id)
 
 
@@ -373,7 +394,9 @@ def doc_id_for_message(message_id: int) -> int | None:
     return _document_message_map.get(message_id)
 
 
-async def answer_question(user_id: int, question: str, doc_id: int | None = None) -> str:
+async def answer_question(
+    user_id: int, question: str, doc_id: int | None = None
+) -> str:
     """Answer a question using retrieved chunks from the user's documents."""
     if db is None:
         return "⚠️ База данных недоступна."

@@ -1,7 +1,6 @@
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -21,7 +20,16 @@ class _FakeDb:
         self._chunks = []
         self._next_id = 1
 
-    def add_document(self, user_id, telegram_file_id, local_path, filename, mime_type, extracted_text, summary):
+    def add_document(
+        self,
+        user_id,
+        telegram_file_id,
+        local_path,
+        filename,
+        mime_type,
+        extracted_text,
+        summary,
+    ):
         doc_id = self._next_id
         self._next_id += 1
         self._docs[doc_id] = {
@@ -54,7 +62,9 @@ class _FakeDb:
 
     def add_document_chunks(self, doc_id, user_id, chunks):
         for chunk in chunks:
-            self._chunks.append({"document_id": doc_id, "user_id": user_id, "chunk": chunk})
+            self._chunks.append(
+                {"document_id": doc_id, "user_id": user_id, "chunk": chunk}
+            )
 
     def search_document_chunks(self, user_id, query, limit=5):
         # Simple substring match for testing.
@@ -118,7 +128,9 @@ async def test_summarize_text_fallback_when_llm_fails():
         "_ollama_simple_prompt",
         new=AsyncMock(return_value=""),
     ):
-        summary = await documents_module.summarize_text("Line one.\nLine two.\nLine three.")
+        summary = await documents_module.summarize_text(
+            "Line one.\nLine two.\nLine three."
+        )
     assert "Line one" in summary
 
 
@@ -183,11 +195,10 @@ def test_map_summary_message_and_lookup():
 
 
 @pytest.mark.asyncio
-async def test_answer_question_with_doc_id():
+async def test_answer_question_with_doc_id(tmp_path):
     documents_module.db = _FakeDb()
-    source_path = tempfile.mktemp(suffix=".txt")
-    with open(source_path, "w", encoding="utf-8") as f:
-        f.write("The capital of France is Paris.")
+    source_path = tmp_path / "q.txt"
+    source_path.write_text("The capital of France is Paris.", encoding="utf-8")
     with patch.object(
         documents_module,
         "summarize_text",
@@ -198,7 +209,7 @@ async def test_answer_question_with_doc_id():
             telegram_file_id="file_q",
             filename="q.txt",
             mime_type="text/plain",
-            source_path=source_path,
+            source_path=str(source_path),
             base_dir="data",
         )
 
@@ -223,21 +234,30 @@ async def test_answer_question_no_results():
     assert "ничего не нашёл" in answer
 
 
-def test_delete_document_removes_file(tmp_path):
-    documents_module.db = _FakeDb()
-    path = tmp_path / "todelete.txt"
-    path.write_text("data", encoding="utf-8")
-    doc_id = documents_module.db.add_document(
-        user_id=1,
-        telegram_file_id=None,
-        local_path=str(path),
-        filename="todelete.txt",
-        mime_type="text/plain",
-        extracted_text="data",
-        summary="summary",
-    )
-    assert documents_module.delete_document(doc_id)
-    assert not path.exists()
+@pytest.mark.asyncio
+async def test_delete_document_removes_file(tmp_path):
+    db_path = tmp_path / "test.db"
+    real_db = Database(str(db_path))
+    documents_module.db = real_db
+
+    source = tmp_path / "report.txt"
+    source.write_text("data", encoding="utf-8")
+    with patch.object(
+        documents_module,
+        "summarize_text",
+        new=AsyncMock(return_value="summary"),
+    ):
+        doc = await documents_module.save_document(
+            user_id=1,
+            telegram_file_id="f1",
+            filename="report.txt",
+            mime_type="text/plain",
+            source_path=str(source),
+            base_dir=str(tmp_path / "data"),
+        )
+
+    assert documents_module.delete_document(doc["id"], user_id=1)
+    assert not Path(doc["local_path"]).exists()
 
 
 def test_delete_document_unknown_returns_false():
@@ -262,7 +282,7 @@ async def test_integration_with_real_db(tmp_path):
         "summarize_text",
         new=AsyncMock(return_value="Revenue grew."),
     ):
-        doc = await documents_module.save_document(
+        await documents_module.save_document(
             user_id=42,
             telegram_file_id="f42",
             filename="report.txt",

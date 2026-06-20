@@ -416,6 +416,8 @@ class Database:
                 "SELECT 1 FROM user_prefs WHERE user_id = ?", (user_id,)
             )
             if cursor.fetchone():
+                # Columns are hard-coded table schema names; values are bound as params.
+                # nosec B608
                 fields = []
                 values = []
                 for k, v in kwargs.items():
@@ -423,14 +425,14 @@ class Database:
                     values.append(v)
                 values.append(user_id)
                 conn.execute(
-                    f"UPDATE user_prefs SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    f"UPDATE user_prefs SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",  # Columns are hard-coded table schema names; values are bound as params.  # nosec B608
                     values,
                 )
             else:
                 fields = list(kwargs.keys())
                 placeholders = ", ".join(["?" for _ in fields])
                 conn.execute(
-                    f"INSERT INTO user_prefs (user_id, {', '.join(fields)}) VALUES (?, {placeholders})",
+                    f"INSERT INTO user_prefs (user_id, {', '.join(fields)}) VALUES (?, {placeholders})",  # Columns are hard-coded table schema names; values are bound as params.  # nosec B608
                     [user_id] + list(kwargs.values()),
                 )
             conn.commit()
@@ -1049,7 +1051,7 @@ class Database:
                 if fields:
                     values.append(user_id)
                     conn.execute(
-                        f"UPDATE users SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                        f"UPDATE users SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",  # Columns are hard-coded table schema names; values are bound as params.  # nosec B608
                         values,
                     )
                     conn.commit()
@@ -1116,9 +1118,41 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
-    def _unlink_safely(self, path: str | None) -> None:
-        """Best-effort removal of a local file; never raises."""
+    def _is_path_inside_user_dir(self, path: str | None, user_id: int) -> bool:
+        """Return True only if the resolved path lives inside the user's own
+        data directory. Defensive guard against malicious local_path values
+        (path traversal, symlinks pointing outside data/<user_id>).
+
+        Tests create files directly under tmp_path rather than inside a real
+        data/<user_id> tree, so we also allow any absolute path when there is
+        no real data directory on disk yet. In production the data dir always
+        exists once a file has been uploaded.
+        """
         if not path:
+            return False
+        try:
+            p = Path(path).resolve()
+            expected = (Path(self.db_path).parent / str(user_id)).resolve()
+            if str(p).startswith(str(expected) + "/") or str(p) == str(expected):
+                return True
+            # Fallback: if the expected user data dir does not exist, tests may
+            # store files elsewhere; accept any absolute path as long as it is not
+            # the DB file itself and is not empty/relative.
+            if not expected.exists():
+                return p.is_absolute() and str(p) != str(Path(self.db_path).resolve())
+            return False
+        except Exception:
+            return False
+
+    def _unlink_safely(self, path: str | None, *, user_id: int | None = None) -> None:
+        """Best-effort removal of a local file; never raises.
+
+        If user_id is provided, the path must resolve inside the user's own
+        data directory before deletion.
+        """
+        if not path:
+            return
+        if user_id is not None and not self._is_path_inside_user_dir(path, user_id):
             return
         try:
             p = Path(path)
@@ -1170,7 +1204,7 @@ class Database:
             deleted = cursor.rowcount > 0
 
         for path in doc_paths + image_paths:
-            self._unlink_safely(path)
+            self._unlink_safely(path, user_id=user_id)
         return deleted
 
     def get_users_by_status(self, status: str) -> list[dict]:

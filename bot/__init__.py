@@ -266,7 +266,7 @@ async def main() -> None:
 
                 mid = m["id"]
                 url = m.get("url", "")
-                safe, _ = cron._is_safe_monitor_url(url)
+                safe, _ = await cron._is_safe_monitor_url_async(url)
                 if not safe:
                     db.update_monitor_status(mid, 0)
                     continue

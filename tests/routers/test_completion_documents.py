@@ -1,5 +1,4 @@
 import sys
-import tempfile
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +25,9 @@ def _message(user_id: int = 42, text: str = "", reply_to=None):
     return msg
 
 
-def _document(file_id: str = "doc1", file_name: str = "report.txt", mime_type: str = "text/plain"):
+def _document(
+    file_id: str = "doc1", file_name: str = "report.txt", mime_type: str = "text/plain"
+):
     doc = MagicMock()
     doc.file_id = file_id
     doc.file_name = file_name
@@ -66,11 +67,15 @@ async def test_handle_document_persists_and_summarizes(fresh_db, tmp_path):
     state = MagicMock()
     state.clear = AsyncMock()
 
-    with patch.object(completion_module.aiogram_bot, "get_file", new=AsyncMock()) as get_file_mock:
+    with patch.object(
+        completion_module.aiogram_bot, "get_file", new=AsyncMock()
+    ) as get_file_mock:
         fake_file = MagicMock()
         fake_file.file_path = "report.txt"
         get_file_mock.return_value = fake_file
-        with patch.object(completion_module.aiogram_bot, "download_file", new=AsyncMock()) as download_mock:
+        with patch.object(
+            completion_module.aiogram_bot, "download_file", new=AsyncMock()
+        ) as download_mock:
 
             def capture_download(_, dest):
                 Path(dest).parent.mkdir(parents=True, exist_ok=True)
@@ -95,10 +100,9 @@ async def test_handle_document_persists_and_summarizes(fresh_db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_answer_document_question_via_reply(fresh_db):
-    source = tempfile.mktemp(suffix=".txt")
-    with open(source, "w", encoding="utf-8") as f:
-        f.write("The capital of France is Paris.")
+async def test_answer_document_question_via_reply(fresh_db, tmp_path):
+    source = tmp_path / "france.txt"
+    source.write_text("The capital of France is Paris.", encoding="utf-8")
 
     with patch.object(
         documents_module,
@@ -120,14 +124,15 @@ async def test_answer_document_question_via_reply(fresh_db):
     reply_to = MagicMock()
     reply_to.message_id = summary_message_id
     msg = _message(text="What is the capital?", reply_to=reply_to)
-    state = MagicMock()
 
     with patch.object(
         documents_module,
         "answer_question",
         new=AsyncMock(return_value="Paris is the capital of France."),
     ):
-        result = await completion_module.answer_document_question(msg, 42, msg.text, summary_message_id)
+        result = await completion_module.answer_document_question(
+            msg, 42, msg.text, summary_message_id
+        )
 
     assert result is True
     msg.answer.assert_awaited_once()
