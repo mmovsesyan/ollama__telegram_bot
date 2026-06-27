@@ -87,7 +87,9 @@ class TestTextHelpers:
         assert _matches_topic("Медведев: правил в отношении Киева", "ии") is False
         assert _matches_topic("российских городах ничего не нашлось", "ии") is False
 
-    def test_matches_topic_multi_word_requires_all_words(self):
+    def test_matches_topic_multi_word_matches_any_synonym(self):
+        # Category-like multi-word topics are treated as synonyms: any hit is
+        # enough, so "игры Steam консоли гейминг" still matches "инди-игр".
         assert (
             _matches_topic(
                 "искусственный интеллект меняет мир", "искусственный интеллект"
@@ -99,8 +101,13 @@ class TestTextHelpers:
                 "искусственный интеллект меняет мир",
                 "искусственный интеллект нейросети",
             )
-            is False
+            is True
         )
+
+    def test_matches_topic_digit_queries_require_all_parts(self):
+        # Specific model/version queries must match every part.
+        assert _matches_topic("новый iPhone 16 Pro", "iphone 16") is True
+        assert _matches_topic("новый iPhone 16 Pro", "iphone 17") is False
 
     def test_matches_topic_no_topic(self):
         assert _matches_topic("anything", None) is True

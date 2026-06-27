@@ -163,22 +163,46 @@ def _extract_image_url(entry: Any) -> str | None:
     return None
 
 
-def _matches_topic(text: str, topic: str | None) -> bool:
+def _word_topic_match(word: str, text_lower: str) -> bool:
+    """Match a topic word against text.
+
+    Short words (≤3 chars) require a whole-word match to avoid matching
+    substrings like "ии" inside unrelated words. Longer words are stem-matched
+    on their first N characters so Russian inflections ("игры"/"игр"/"игровой")
+    still hit without requiring the exact dictionary form.
+    """
+    if len(word) <= 3:
+        return bool(re.search(rf"\b{re.escape(word)}\b", text_lower))
+    stem_len = max(3, len(word) - 2)
+    stem = word[:stem_len]
+    return bool(re.search(rf"\b{re.escape(stem)}", text_lower))
+
+
+def _matches_topic(
+    text: str, topic: str | None, *, feed_url: str | None = None
+) -> bool:
     if not topic:
         return True
     topic = topic.lower().strip()
     if not topic:
         return True
-    # Multi-word topics are matched as a phrase or by whole words; single-word
-    # topics require a whole-word match. This prevents short Russian substrings
-    # like "ии" from matching inside unrelated words ("отношении", "российских").
+
+    # If the feed itself was chosen for this topic, trust its curation and
+    # don't drop articles just because they don't literally contain every
+    # synonym (e.g. a Witcher 4 piece on stopgame.ru is still gaming news even
+    # if it doesn't say the word "игры").
+    if feed_url and feed_url in _feeds_for_topic(topic):
+        return True
+
+    # Otherwise match any whole/stem word from the topic. If the topic contains
+    # digits (e.g. "iPhone 17", "GTA 6") require every part to match so specific
+    # model/version queries don't return unrelated siblings.
     words = topic.split()
     text_lower = text.lower()
-    if len(words) == 1:
-        return bool(re.search(rf"\b{re.escape(topic)}\b", text_lower))
-    if topic in text_lower:
-        return True
-    return all(bool(re.search(rf"\b{re.escape(word)}\b", text_lower)) for word in words)
+    has_digit = any(ch.isdigit() for word in words for ch in word)
+    if has_digit:
+        return all(_word_topic_match(word, text_lower) for word in words) or topic in text_lower
+    return any(_word_topic_match(word, text_lower) for word in words)
 
 
 def _looks_russian(text: str) -> bool:
@@ -284,7 +308,7 @@ async def _parse_feeds(
                 and not _looks_russian(combined)
             ):
                 continue
-            if not _matches_topic(combined, topic):
+            if not _matches_topic(combined, topic, feed_url=url):
                 continue
 
             source = _extract_source_from_url(link)
