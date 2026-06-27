@@ -161,18 +161,22 @@ async def _process_news(message: Message, topic: str | None = None):
 
     await message.answer(f"📰 Ищу новости: {label}...")
 
-    from bot.services.rss_news import get_fresh_news
+    from bot.services.rss_news import get_fresh_news, render_news
 
     text, items, source = await get_fresh_news(user_id, topic=search_topic, limit=5)
-    if not text:
+    if not items:
         await message.answer(
             f"Новостей по запросу «{label}» не найдено.",
             reply_markup=command_keyboard,
         )
         return
 
-    footer = f"\n\n(источник: {source})" if source else ""
-    full_text = text + footer
+    # Render with clickable headlines for Telegram HTML parse mode.
+    full_text = render_news(
+        items,
+        header=f"📰 Новости: {label}",
+        html=True,
+    )
     if len(full_text) > 4096:
         full_text = full_text[:4090] + "..."
 
@@ -183,14 +187,14 @@ async def _process_news(message: Message, topic: str | None = None):
     if image_items:
         media_group: list[InputMediaPhoto] = []
         for it in image_items:
-            caption = f"*{it.title}*\n\n{it.summary[:140]}"
+            caption = f"<b>{it.title}</b>\n\n{it.summary[:140]}"
             if len(caption) > 1024:
                 caption = caption[:1020] + "..."
             media_group.append(
                 InputMediaPhoto(
                     media=it.image_url,
                     caption=caption,
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                 )
             )
         try:
@@ -199,7 +203,7 @@ async def _process_news(message: Message, topic: str | None = None):
             logger.warning("[NEWS] failed to send media group: %s", e)
 
     await message.answer(
-        full_text, reply_markup=command_keyboard, parse_mode="Markdown"
+        full_text, reply_markup=command_keyboard, parse_mode="HTML"
     )
 
 

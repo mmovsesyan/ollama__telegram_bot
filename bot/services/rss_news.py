@@ -357,48 +357,71 @@ def _source_emoji(source: str) -> str:
     return "🌐"
 
 
-def _format_rss_item(item: NewsItem, idx: int) -> str:
-    """Format a single news item as a compact rich card.
-
-    Layout:
-    {idx}. {emoji} {title}
-    🕐 {date} · 🌐 {source}
-    {snippet}
-    🔗 {url}
-    """
-    lines: list[str] = [f"{idx}. {_source_emoji(item.source)} {item.title}"]
-
-    meta_parts: list[str] = []
+def _format_meta(item: NewsItem) -> str:
+    """Compact 'source · date' line."""
+    parts: list[str] = []
+    if item.source:
+        parts.append(item.source)
     if item.published:
         try:
-            date_str = item.published.strftime("%d %b · %H:%M")
+            parts.append(item.published.strftime("%d %b, %H:%M"))
         except Exception:
-            date_str = str(item.published)[:16]
-        meta_parts.append(f"🕐 {date_str}")
-    if item.source:
-        meta_parts.append(f"🌐 {item.source}")
-    if meta_parts:
-        lines.append("   " + " · ".join(meta_parts))
+            parts.append(str(item.published)[:16])
+    return " · ".join(parts)
 
-    if item.summary:
-        snippet = item.summary[:180]
-        if len(item.summary) > 180:
-            snippet = snippet.rsplit(" ", 1)[0] + "..."
-        lines.append(f"   {snippet}")
 
-    if item.url:
-        lines.append(f"   🔗 {item.url}")
+def _format_rss_item(item: NewsItem, idx: int, html: bool = False) -> str:
+    """Format a single news item as a compact rich card.
 
+    Plain text layout:
+    {idx}. {emoji} {title}
+       {source} · {date}
+       {snippet}
+
+    HTML layout:
+    <b>{idx}.</b> <a href="url">{emoji} {title}</a>
+    <i>{source} · {date}</i>
+    {snippet}
+    """
+    title = item.title.strip()
+    snippet = item.summary.strip()
+    meta = _format_meta(item)
+    emoji = _source_emoji(item.source)
+
+    if html:
+        from html import escape
+
+        safe_title = escape(title)
+        safe_snippet = escape(snippet)
+        safe_meta = escape(meta)
+        safe_url = escape(item.url)
+        lines = [f"<b>{idx}.</b> <a href=\"{safe_url}\">{emoji} {safe_title}</a>"]
+        if meta:
+            lines.append(f"<i>{safe_meta}</i>")
+        if snippet:
+            lines.append(safe_snippet)
+        return "\n".join(lines)
+
+    lines = [f"{idx}. {emoji} {title}"]
+    if meta:
+        lines.append(f"   {meta}")
+    if snippet:
+        summary = snippet[:180]
+        if len(snippet) > 180:
+            summary = summary.rsplit(" ", 1)[0] + "..."
+        lines.append(f"   {summary}")
     return "\n".join(lines)
 
 
-def render_news(items: list[NewsItem], header: str = "📰 Новости") -> str:
+def render_news(
+    items: list[NewsItem], header: str = "📰 Новости", html: bool = False
+) -> str:
     """Render a list of news items into a clean Telegram message."""
     if not items:
         return ""
-    blocks: list[str] = [f"*{header}*", ""]
+    blocks: list[str] = [header, ""]
     for i, item in enumerate(items, 1):
-        blocks.append(_format_rss_item(item, i))
+        blocks.append(_format_rss_item(item, i, html=html))
         blocks.append("")
     return "\n".join(blocks)[:4096]
 

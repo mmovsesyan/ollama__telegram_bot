@@ -154,14 +154,17 @@ class TestFormatting:
         assert "habr.com" in text
         assert "18 июн" in text or "18 Jun" in text
         assert "Краткое" in text
-        assert "https://habr.com/news/1" in text
+
+        # HTML variant embeds the URL as a clickable link.
+        html = _format_rss_item(item, 1, html=True)
+        assert 'href="https://habr.com/news/1"' in html
+        assert "💻 Заголовок" in html
 
     def test_format_rss_item_without_date(self):
         item = NewsItem("Title", "https://x.com/a", "Snippet", None, "")
         text = _format_rss_item(item, 2)
         assert "2. 🌐 Title" in text
         assert "Snippet" in text
-        assert "🕐" not in text
 
     def test_format_rss_item_uses_source_emoji(self):
         item = NewsItem("Habr News", "https://habr.com/1", "Summary", None, "habr.com")

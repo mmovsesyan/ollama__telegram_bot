@@ -121,7 +121,7 @@ async def get_personalized_digest(
         top = ranked[:items_per_category]
         blocks.append(f"📌 {cat.upper()}")
         for i, item in enumerate(top, 1):
-            blocks.append(rss_news_service._format_rss_item(item, i))
+            blocks.append(rss_news_service._format_rss_item(item, i, html=False))
             blocks.append("")
         has_any = True
 
