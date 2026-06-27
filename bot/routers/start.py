@@ -5,6 +5,7 @@ from aiogram.filters.command import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.bot import bot as aiogram_bot
 from bot.keyboards.reply import cancel_keyboard, command_keyboard
 from bot.security import is_allowed
 from bot.services.profile import resolve_timezone, now_in_tz
@@ -37,6 +38,11 @@ async def start_command(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
     username = message.from_user.username
     full_name = message.from_user.full_name
+
+    try:
+        await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+    except Exception:
+        pass
 
     if db:
         db.ensure_user(user_id, username=username, full_name=full_name)

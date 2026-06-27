@@ -6,12 +6,14 @@ import logging
 import re
 import socket
 from datetime import datetime
+from typing import Awaitable, TypeVar
 from urllib.parse import urlparse
 
 import aiohttp
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.bot import bot as aiogram_bot
 from bot.keyboards.reply import command_keyboard
 from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
@@ -22,6 +24,8 @@ from bot.settings import OLLAMA_MODEL, SYSTEM_MESSAGE
 db = None
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Known command buttons that should cancel pending FSM input
 _COMMAND_BUTTONS = {
@@ -487,6 +491,33 @@ async def _classify_memory(content: str) -> str:
     if result in ("fact", "preference", "note"):
         return result
     return "note"
+
+
+async def _typing_until(user_id: int, task: Awaitable[T], interval: float = 4.0) -> T:
+    """Keep Telegram typing action alive while `task` runs.
+
+    Wraps the awaitable in a background loop that calls
+    send_chat_action("typing") every `interval` seconds.
+    Stops automatically when the task finishes or raises.
+    """
+
+    async def _loop() -> None:
+        while True:
+            try:
+                await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
+
+    worker = asyncio.create_task(_loop())
+    try:
+        return await task
+    finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
 
 
 def _refresh_completion_system_prompt(user_id: int) -> None:

@@ -17,6 +17,7 @@ from bot.keyboards.reply import command_keyboard, cancel_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
+from bot.routers.common import _typing_until
 from bot.security import is_allowed as _is_allowed
 from bot.settings import (
     CLOUD_MODELS,
@@ -173,7 +174,6 @@ async def generate(message: Message, user_id: int, text: str):
             _log_warning(f"Failed to clear reply markup for {user_id}: {exc}")
 
     chat.linked_last_messages = None
-    await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
 
     chat.last_active = time.time()
     prompt = text
@@ -191,10 +191,14 @@ async def generate(message: Message, user_id: int, text: str):
     assistant_content = ""
     try:
         async with asyncio.timeout(300):
-            async for is_done, chunk in generate_chat_completion(
-                chat.ollama_chat.messages,
-                chat.selected_model,
-                temperature=OLLAMA_MODEL_TEMPERATURE,
+            async for is_done, chunk in _typing_until(
+                user_id,
+                generate_chat_completion(
+                    chat.ollama_chat.messages,
+                    chat.selected_model,
+                    temperature=OLLAMA_MODEL_TEMPERATURE,
+                ),
+                interval=4.0,
             ):
                 if is_done:
                     wrapped_response = wrap(assistant_content, 4096)
@@ -236,8 +240,6 @@ async def generate(message: Message, user_id: int, text: str):
                         await msg.edit_text(f"Ошибка Ollama: {chunk.error}")
                         break
                     assistant_content += chunk.message.content
-                    if len(assistant_content) % 100 == 0:
-                        await _safe_typing(user_id)
     except asyncio.TimeoutError:
         print(f"[ERROR] Generation timeout for user {user_id}")
         await msg.edit_text(
@@ -584,7 +586,9 @@ async def cmd_models(message: Message):
     if not _is_allowed(message.from_user.id):
         print(f"[BLOCKED] Unauthorized user {message.from_user.id}")
         return
-    models = await get_installed_models()
+    user_id = message.from_user.id
+    await message.answer("🤖 Загружаю список моделей...")
+    models = await _typing_until(user_id, get_installed_models())
     cloud_names = [m.name for m in models if _is_cloud_model(m.name)]
     model_list = "\n".join([f"- {name}" for name in cloud_names]) or "Нет моделей"
     await message.answer(
@@ -829,7 +833,9 @@ async def answer_document_question(
     if doc_id is None:
         return False
 
-    answer = await documents_service.answer_question(user_id, question, doc_id=doc_id)
+    answer = await _typing_until(
+        user_id, documents_service.answer_question(user_id, question, doc_id=doc_id)
+    )
     if not answer:
         return False
     await message.answer(answer, reply_markup=command_keyboard)
@@ -853,7 +859,9 @@ async def handle_document(message: Message, state: FSMContext):
 
     tmp_path = None
     try:
-        tmp_path, fname, suffix = await _download_document(document)
+        tmp_path, fname, suffix = await _typing_until(
+            user_id, _download_document(document)
+        )
     except Exception as e:
         await message.answer(
             f"❌ Ошибка загрузки файла: {str(e)[:200]}", reply_markup=command_keyboard
@@ -863,13 +871,16 @@ async def handle_document(message: Message, state: FSMContext):
     try:
         from bot.services import documents as documents_service
 
-        doc = await documents_service.save_document(
-            user_id=user_id,
-            telegram_file_id=document.file_id,
-            filename=document.file_name,
-            mime_type=document.mime_type,
-            source_path=tmp_path,
-            base_dir=DOCUMENTS_DIR,
+        doc = await _typing_until(
+            user_id,
+            documents_service.save_document(
+                user_id=user_id,
+                telegram_file_id=document.file_id,
+                filename=document.file_name,
+                mime_type=document.mime_type,
+                source_path=tmp_path,
+                base_dir=DOCUMENTS_DIR,
+            ),
         )
     except Exception as e:
         logger.exception("[DOCUMENT] failed to save document for user_id=%s", user_id)
@@ -919,11 +930,13 @@ async def handle_photo(message: Message, state: FSMContext):
 
     tmp_path = None
     try:
-        file = await aiogram_bot.get_file(largest.file_id)
+        file = await _typing_until(user_id, aiogram_bot.get_file(largest.file_id))
         suffix = ".jpg"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp_path = tmp.name
-        await aiogram_bot.download_file(file.file_path, tmp_path)
+        await _typing_until(
+            user_id, aiogram_bot.download_file(file.file_path, tmp_path)
+        )
     except Exception as e:
         logger.exception("[PHOTO] download failed for user_id=%s", user_id)
         await message.answer(
@@ -932,13 +945,16 @@ async def handle_photo(message: Message, state: FSMContext):
         return
 
     try:
-        image = await images_service.process_image(
-            user_id=user_id,
-            telegram_file_id=largest.file_id,
-            source_path=tmp_path,
-            caption=message.caption,
-            filename="image.jpg",
-            base_dir=DOCUMENTS_DIR,
+        image = await _typing_until(
+            user_id,
+            images_service.process_image(
+                user_id=user_id,
+                telegram_file_id=largest.file_id,
+                source_path=tmp_path,
+                caption=message.caption,
+                filename="image.jpg",
+                base_dir=DOCUMENTS_DIR,
+            ),
         )
     except Exception as e:
         logger.exception("[PHOTO] processing failed for user_id=%s", user_id)

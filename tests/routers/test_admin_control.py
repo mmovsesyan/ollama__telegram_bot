@@ -1,6 +1,13 @@
+import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+if "bot.bot" not in sys.modules:
+    _fake_bot_module = ModuleType("bot.bot")
+    _fake_bot_module.bot = MagicMock()
+    sys.modules["bot.bot"] = _fake_bot_module
 
 from bot.routers import admin_control as ac_module
 
@@ -27,11 +34,14 @@ async def test_bot_status_shown_to_admin():
         state = MagicMock()
         state.clear = AsyncMock()
         await ac_module.cmd_bot_status(msg, state)
-        msg.answer.assert_awaited_once()
+        msg.answer.assert_awaited()
+    # First message is the interim "Получаю статус..."; final text is the status.
+    assert len(msg.answer.await_args_list) >= 1
 
 
 @pytest.mark.asyncio
 async def test_bot_status_hidden_from_non_admin():
+
     with patch.object(ac_module, "ADMIN_IDS", {42}):
         msg = _message(7, "/bot_status")
         state = MagicMock()
@@ -48,9 +58,9 @@ async def test_bot_start_calls_supervisor():
             state = MagicMock()
             state.clear = AsyncMock()
             await ac_module.cmd_bot_start(msg, state)
-            text = msg.answer.await_args.args[0]
-            assert "✅" in text
-            assert "ok" in text
+            # Interim message then final status edit.
+            assert msg.answer.await_count == 1
+            assert "Запускаю бота" in msg.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio

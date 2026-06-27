@@ -6,6 +6,7 @@ from aiogram.types import Message
 from bot.intent.executor import IntentExecutor
 from bot.intent.router import LLMIntentRouter
 from bot.keyboards.reply import command_keyboard
+from bot.routers.common import _typing_until
 from bot.security import is_allowed
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,12 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         # Let cron/completion routers handle explicit commands and button presses.
         return
 
+    # Give the user immediate feedback as early as possible.
+    try:
+        await message.bot.send_chat_action(chat_id=user_id, action="typing")
+    except Exception:
+        logger.debug("Failed to send typing action for user_id=%s", user_id)
+
     # Reply-based photo Q&A: if the user replies to an image description
     # message from the bot, answer the question about that specific photo.
     reply_to = message.reply_to_message
@@ -59,11 +66,14 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         from bot.services import images as images_service
         image_id = images_service.image_id_for_message(reply_to.message_id)
         if image_id is not None:
-            answer = await images_service.answer_question(user_id, image_id, text)
+            status_msg = await message.answer("👀 Смотрю на фото...")
+            answer = await _typing_until(
+                user_id, images_service.answer_question(user_id, image_id, text)
+            )
             if answer:
-                await message.answer(answer, reply_markup=command_keyboard)
+                await status_msg.edit_text(answer, reply_markup=command_keyboard)
             else:
-                await message.answer(
+                await status_msg.edit_text(
                     "⚠️ Не удалось получить ответ по фото.", reply_markup=command_keyboard
                 )
             return
@@ -80,23 +90,22 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     if state is not None:
         await state.clear()
 
-    # Give the user immediate feedback before any routing/generation work.
-    try:
-        await message.bot.send_chat_action(chat_id=user_id, action="typing")
-    except Exception:
-        logger.debug("Failed to send typing action for user_id=%s", user_id)
-
     # Broad catch-all keeps the Telegram handler from crashing on any pipeline bug;
     # individual tools already have their own exception handling.
     try:
-        intent_result = await LLMIntentRouter.route(user_id=user_id, message_text=text)
-        result = await _default_executor.execute(
-            user_id=user_id,
-            message_text=text,
-            intent_result=intent_result,
-            db=db,
-            state=state,
-            message=message,
+        intent_result = await _typing_until(
+            user_id, LLMIntentRouter.route(user_id=user_id, message_text=text)
+        )
+        result = await _typing_until(
+            user_id,
+            _default_executor.execute(
+                user_id=user_id,
+                message_text=text,
+                intent_result=intent_result,
+                db=db,
+                state=state,
+                message=message,
+            ),
         )
     except Exception:
         logger.exception("Smart handler failed for user_id=%s", user_id)

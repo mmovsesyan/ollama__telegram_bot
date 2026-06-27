@@ -21,6 +21,8 @@ def _make_message(text: str = "hello world") -> MagicMock:
     message.from_user = MagicMock(id=42)
     message.text = text
     message.answer = AsyncMock()
+    message.bot = MagicMock()
+    message.bot.send_chat_action = AsyncMock()
     return message
 
 
@@ -34,10 +36,28 @@ async def test_handler_skips_missing_from_user():
         await smart_message_handler(message, state=None)
     mock_route.assert_not_awaited()
     message.answer.assert_not_awaited()
+    message.bot.send_chat_action.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handler_sends_typing_action_early():
+    message = _make_message()
+    with patch(
+        "bot.handlers.smart.LLMIntentRouter.route", new_callable=AsyncMock
+    ) as mock_route, patch(
+        "bot.handlers.smart.IntentExecutor.execute", new_callable=AsyncMock
+    ) as mock_exec:
+        mock_route.return_value = MagicMock()
+        mock_exec.return_value = MagicMock(text="ok", success=True, reply_markup=None)
+        await smart_message_handler(message, state=None)
+    message.bot.send_chat_action.assert_awaited_once_with(
+        chat_id=42, action="typing"
+    )
 
 
 @pytest.mark.asyncio
 async def test_handler_skips_missing_text():
+
     message = _make_message()
     message.text = None
     with patch(
@@ -46,10 +66,12 @@ async def test_handler_skips_missing_text():
         await smart_message_handler(message, state=None)
     mock_exec.assert_not_awaited()
     message.answer.assert_not_awaited()
+    message.bot.send_chat_action.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_handler_clears_state_when_provided():
+
     message = _make_message()
     state = MagicMock()
     state.clear = AsyncMock()

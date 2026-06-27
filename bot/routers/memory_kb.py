@@ -24,6 +24,7 @@ from bot.routers.common import (
     _classify_memory,
     _fsm_guard,
     _refresh_completion_system_prompt,
+    _typing_until,
 )
 
 router = Router()
@@ -417,7 +418,7 @@ async def _show_memories(
 async def _send_memory_summary(user_id: int, message: Message):
     from bot.services.kb import summarize_kb
 
-    text = await summarize_kb(user_id)
+    text = await _typing_until(user_id, summarize_kb(user_id))
     await message.answer(text, reply_markup=memory_menu_keyboard())
 
 
@@ -610,10 +611,14 @@ async def _process_kb(message: Message, query: str):
     if not query:
         await message.answer("Введи поисковый запрос.", reply_markup=cancel_keyboard)
         return
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
     from bot.services.kb import search_kb_with_web_fallback
 
-    text, hits, used_web = await search_kb_with_web_fallback(
-        message.from_user.id, query, limit=5
+    await message.answer("📚 Ищу в базе и интернете...")
+    text, hits, used_web = await _typing_until(
+        user_id, search_kb_with_web_fallback(user_id, query, limit=5)
     )
     if not text:
         await message.answer(

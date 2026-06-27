@@ -13,6 +13,7 @@ from bot.states import BotStates
 from bot.routers.common import (
     _BUTTON_HANDLERS,
     _fsm_guard,
+    _typing_until,
     ollama_web_fetch,
     ollama_web_search,
 )
@@ -78,10 +79,11 @@ async def _process_weather(message: Message, raw: str):
 
     label = "прогноз" if is_forecast else "погоду"
     await message.answer(f"🌤 Ищу {label}: {city}...")
+    user_id = message.from_user.id
     if is_forecast:
-        text, error = await get_forecast(city, days or 7)
+        text, error = await _typing_until(user_id, get_forecast(city, days or 7))
     else:
-        text, error = await get_weather(city)
+        text, error = await _typing_until(user_id, get_weather(city))
     if error:
         await message.answer(
             f"❌ Ошибка погоды: {error}", reply_markup=command_keyboard
@@ -173,7 +175,9 @@ async def _process_news(message: Message, topic: str | None = None):
 
     from bot.services.rss_news import get_fresh_news, render_news
 
-    text, items, source = await get_fresh_news(user_id, topic=search_topic, limit=5)
+    text, items, source = await _typing_until(
+        user_id, get_fresh_news(user_id, topic=search_topic, limit=5)
+    )
     if not items:
         await message.answer(
             f"Новостей по запросу «{label}» не найдено.",
@@ -225,7 +229,7 @@ async def _process_digest(message: Message):
 
     from bot.services.news_categories import get_personalized_digest
 
-    text = await get_personalized_digest(user_id)
+    text = await _typing_until(user_id, get_personalized_digest(user_id))
     await message.answer(text, reply_markup=command_keyboard)
 
 
@@ -385,9 +389,12 @@ async def cmd_search(message: Message, state: FSMContext):
 
 
 async def _process_search(message: Message, query: str):
+    user_id = message.from_user.id
     await message.answer(f"🔍 Ищу в интернете: {query}...")
 
-    result, error = await ollama_web_search(query, max_results=5)
+    result, error = await _typing_until(
+        user_id, ollama_web_search(query, max_results=5)
+    )
     if error:
         await message.answer(
             f"❌ Ошибка поиска: {error}", reply_markup=command_keyboard
@@ -448,9 +455,12 @@ async def cmd_fetch(message: Message, state: FSMContext):
 
 
 async def _process_fetch(message: Message, url: str):
+    if message.from_user is None:
+        return
+    user_id = message.from_user.id
     await message.answer(f"📄 Загружаю: {url}...")
 
-    result, error = await ollama_web_fetch(url)
+    result, error = await _typing_until(user_id, ollama_web_fetch(url))
     if error:
         await message.answer(
             f"❌ Ошибка загрузки: {error}", reply_markup=command_keyboard
