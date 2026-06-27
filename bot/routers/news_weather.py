@@ -12,7 +12,6 @@ from bot.services.weather import get_forecast, get_weather
 from bot.states import BotStates
 from bot.routers.common import (
     _BUTTON_HANDLERS,
-    _extract_main_text,
     _fsm_guard,
     ollama_web_fetch,
     ollama_web_search,
@@ -110,30 +109,41 @@ async def process_weather(message: Message, state: FSMContext):
 
 
 def _format_search_results(query: str, items: list[dict]) -> str:
-    """Render Ollama web-search results in the same clean style as RSS news."""
-    text = f"🔍 {query}\n\n"
+    """Render Ollama web-search results as compact clickable cards (HTML)."""
+    from html import escape
+    import re
+
+    blocks = [f"<b>🔍 {escape(query)}</b>", ""]
     for i, item in enumerate(items[:5], 1):
-        title = item.get("title", "Без названия").strip()
-        url = item.get("url", "").strip()
-        snippet = _extract_main_text(item.get("content", ""), max_len=220)
-        source = ""
+        title = (item.get("title") or "Без названия").strip()
+        url = (item.get("url") or "").strip()
+        raw_content = item.get("content") or item.get("body") or ""
+        # Web search snippets sometimes contain raw HTML/imgs; strip tags.
+        snippet = re.sub(r"<[^>]+>", " ", str(raw_content))
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        if len(snippet) > 180:
+            snippet = snippet[:180].rsplit(" ", 1)[0] + "..."
+
+        domain = ""
         if url:
             try:
                 domain = urlparse(url).netloc.replace("www.", "")
-                if domain:
-                    source = f"🌐 {domain}"
-            except ValueError as exc:
-                logger.warning("Failed to parse search result URL %r: %s", url, exc)
+            except Exception:
+                pass
 
-        text += f"{i}. {title}\n"
-        if source:
-            text += f"   {source}\n"
+        safe_title = escape(title)
+        safe_url = escape(url)
+        safe_domain = escape(domain)
+        safe_snippet = escape(snippet)
+
+        lines = [f"<b>{i}.</b> <a href=\"{safe_url}\">{safe_title}</a>"]
+        if domain:
+            lines.append(f"<i>{safe_domain}</i>")
         if snippet:
-            text += f"   {snippet}\n"
-        if url:
-            text += f"   🔗 {url}\n"
-        text += "\n"
-    return text[:4096]
+            lines.append(safe_snippet)
+        blocks.append("\n".join(lines))
+        blocks.append("")
+    return "\n".join(blocks)[:4096]
 
 
 async def _process_news(message: Message, topic: str | None = None):
@@ -394,7 +404,9 @@ async def _process_search(message: Message, query: str):
         return
 
     text = _format_search_results(query, items)
-    await message.answer(text, reply_markup=command_keyboard)
+    await message.answer(
+        text, reply_markup=command_keyboard, parse_mode="HTML"
+    )
 
 
 @router.message(BotStates.waiting_search)
