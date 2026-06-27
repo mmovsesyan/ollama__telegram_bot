@@ -45,6 +45,7 @@ async def cmd_monitor_add(message: Message, state: FSMContext):
     if len(parts) >= 3:
         await _process_monitor_add(
             message,
+            message.from_user.id,
             parts[1],
             _normalize_url(parts[2]),
             _parse_interval(parts[3]) if len(parts) >= 4 else 300,
@@ -134,7 +135,9 @@ async def process_monitor_interval(message: Message, state: FSMContext):
     await _finish_monitor_add(message, state, message.from_user.id)
 
 
-async def _finish_monitor_add(message: Message, state: FSMContext, user_id: int):
+async def _finish_monitor_add(
+    message: Message, state: FSMContext, user_id: int | None = None
+):
     data = await state.get_data()
     name = data.get("monitor_name", "")
     url = data.get("monitor_url", "")
@@ -145,12 +148,21 @@ async def _finish_monitor_add(message: Message, state: FSMContext, user_id: int)
         )
         await state.clear()
         return
-    await _process_monitor_add(message, name, url, interval)
+    # For callback-driven flows callback.message.from_user is the bot, not the
+    # user, so the caller must pass the real user_id explicitly.
+    if user_id is None and message.from_user is not None:
+        user_id = message.from_user.id
+    await _process_monitor_add(message, user_id, name, url, interval)
     await state.clear()
 
 
 async def _process_monitor_add(
-    message: Message, name: str, url: str, interval: int, expected_status: int = 200
+    message: Message,
+    user_id: int,
+    name: str,
+    url: str,
+    interval: int,
+    expected_status: int = 200,
 ):
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
@@ -186,7 +198,7 @@ async def _process_monitor_add(
         )
 
     mid = db.add_monitor(
-        user_id=message.from_user.id,
+        user_id=user_id,
         name=name,
         url=url,
         expected_status=expected_status,

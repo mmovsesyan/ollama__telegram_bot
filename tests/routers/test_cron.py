@@ -136,7 +136,7 @@ def test_is_safe_monitor_url_accepts_public_and_blocks_internal():
 @pytest.mark.asyncio
 async def test_process_monitor_add_rejects_localhost(fresh_db):
     msg = _message(text="/monitor_add Test http://localhost")
-    await cron_module._process_monitor_add(msg, "Test", "http://localhost", 300)
+    await cron_module._process_monitor_add(msg, 42, "Test", "http://localhost", 300)
 
     assert fresh_db.get_monitors(42) == []
     msg.answer.assert_awaited()
@@ -165,7 +165,7 @@ async def test_process_monitor_add_accepts_public_url(fresh_db):
             new=AsyncMock(return_value=(True, "")),
         ):
             await cron_module._process_monitor_add(
-                msg, "Test", "http://example.com", 300
+                msg, 42, "Test", "http://example.com", 300
             )
 
     monitors = fresh_db.get_monitors(42)
@@ -184,7 +184,7 @@ async def test_process_monitor_add_async_dns_rejects_private_resolution(fresh_db
         new=AsyncMock(return_value=(False, "хост разрешается в запрещённый IP")),
     ):
         await cron_module._process_monitor_add(
-            msg, "Test", "http://rebind.example", 300
+            msg, 42, "Test", "http://rebind.example", 300
         )
 
     assert fresh_db.get_monitors(42) == []
