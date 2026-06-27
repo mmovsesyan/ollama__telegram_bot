@@ -152,6 +152,12 @@ async def _finish_monitor_add(
     # user, so the caller must pass the real user_id explicitly.
     if user_id is None and message.from_user is not None:
         user_id = message.from_user.id
+    if user_id is None:
+        await message.answer(
+            "Ошибка: не удалось определить пользователя.", reply_markup=command_keyboard
+        )
+        await state.clear()
+        return
     await _process_monitor_add(message, user_id, name, url, interval)
     await state.clear()
 
@@ -166,6 +172,12 @@ async def _process_monitor_add(
 ):
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
+        return
+    if not isinstance(user_id, int) or user_id <= 0:
+        logger.error("Refusing to add monitor without valid user_id")
+        await message.answer(
+            "Ошибка: некорректный ID пользователя.", reply_markup=command_keyboard
+        )
         return
 
     safe, reason = await _is_safe_monitor_url_async(url)
