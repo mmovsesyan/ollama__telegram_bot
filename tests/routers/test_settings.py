@@ -4,7 +4,6 @@ import pytest
 
 from bot.db import Database
 from bot.routers import settings as settings_module
-from bot.states import BotStates
 
 
 def _message(user_id: int = 42, text: str = ""):

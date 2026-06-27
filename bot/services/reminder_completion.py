@@ -83,14 +83,14 @@ def find_matching_reminder(user_id: int, text: str) -> dict | None:
     if not looks_like_completion(text):
         return None
 
-    user_tokens = _tokenize(text)
+    text_tokens = _tokenize(text)
     best: dict | None = None
     best_score = 0.0
 
     for reminder in reminders:
         content = reminder.get("content") or ""
         score = _score_match(text, content)
-        overlap = len(_tokenize(text) & _tokenize(content))
+        overlap = len(text_tokens & _tokenize(content))
         if overlap >= _MIN_OVERLAP_TOKENS and score >= _MIN_MATCH_SCORE and score > best_score:
             best = reminder
             best_score = score
@@ -124,14 +124,14 @@ def completion_offer_text(user_text: str, reminder_content: str) -> str:
 
 
 def complete_reminder(user_id: int, reminder_id: int) -> str:
-    """Disable/delete a reminder after user confirmation. Returns status text."""
+    """Permanently delete a reminder after user confirmation. Returns status text."""
     if db is None:
         return "⚠️ База данных недоступна."
     try:
         reminder = db.get_reminder(reminder_id)
         if not reminder or reminder.get("user_id") != user_id:
             return "⚠️ Напоминание не найдено или нет доступа."
-        db.disable_reminder(reminder_id)
+        db.delete_reminder(reminder_id)
         content = reminder.get("content") or ""
         return f"✅ Закрыл напоминание: {content}"
     except Exception:

@@ -209,7 +209,7 @@ class TestSearchAndNewsTools:
             args=IntentArgs(query="find x"),
             intent_result=IntentResult(intent="search", tool="search", confidence=0.9),
         )
-        with patch("bot.routers.cron.ollama_web_search", side_effect=fake_search):
+        with patch("bot.routers.common.ollama_web_search", side_effect=fake_search):
             result = await tool.execute(ctx)
         assert result.success is True
         assert "R" in result.text
@@ -224,7 +224,7 @@ class TestSearchAndNewsTools:
             args=IntentArgs(query="q"),
             intent_result=IntentResult(intent="search", tool="search", confidence=0.9),
         )
-        with patch("bot.routers.cron.ollama_web_search", return_value=(None, "timeout")):
+        with patch("bot.routers.common.ollama_web_search", return_value=(None, "timeout")):
             result = await tool.execute(ctx)
         assert result.success is False
         assert "timeout" in result.text
@@ -325,7 +325,7 @@ class TestPersistenceTools:
             intent_result=IntentResult(intent="add_memory", tool="memory", confidence=0.9),
             db=db,
         )
-        with patch("bot.routers.cron._classify_memory", new=AsyncMock(return_value="preference")):
+        with patch("bot.routers.common._classify_memory", new=AsyncMock(return_value="preference")):
             result = await tool.execute(ctx)
 
         db.add_memory.assert_called_once_with(2, "preference", "я люблю Python")

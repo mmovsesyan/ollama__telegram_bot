@@ -4,6 +4,7 @@ import pytest
 
 from bot.db import Database
 from bot.routers import cron as cron_module
+from bot.routers import monitors as monitors_module
 from bot.services import news_categories as nc_module
 
 
@@ -157,9 +158,9 @@ async def test_process_monitor_add_accepts_public_url(fresh_db):
     mock_session.__aexit__ = AsyncMock(return_value=False)
     mock_session.get = MagicMock(return_value=mock_response)
 
-    with patch.object(cron_module.aiohttp, "ClientSession", return_value=mock_session):
+    with patch.object(monitors_module.aiohttp, "ClientSession", return_value=mock_session):
         with patch.object(
-            cron_module,
+            monitors_module,
             "_is_safe_monitor_url_async",
             new=AsyncMock(return_value=(True, "")),
         ):
@@ -178,7 +179,7 @@ async def test_process_monitor_add_async_dns_rejects_private_resolution(fresh_db
     msg = _message(text="/monitor_add Test http://rebind.example")
 
     with patch.object(
-        cron_module,
+        monitors_module,
         "_is_safe_monitor_url_async",
         new=AsyncMock(return_value=(False, "хост разрешается в запрещённый IP")),
     ):

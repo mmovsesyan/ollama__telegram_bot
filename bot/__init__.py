@@ -51,6 +51,14 @@ ADMIN_COMMANDS = [
     BotCommand(command="admin_demote", description="Снять админа"),
 ]
 
+PROCESS_COMMANDS = [
+    BotCommand(command="bot_status", description="Статус бота"),
+    BotCommand(command="bot_start", description="Запустить бота"),
+    BotCommand(command="bot_stop", description="Остановить бота"),
+    BotCommand(command="bot_restart", description="Перезапустить бота"),
+    BotCommand(command="bot_logs", description="Логи бота"),
+]
+
 
 async def main() -> None:
     # Pre validate required model and overall ollama health.
@@ -58,7 +66,20 @@ async def main() -> None:
 
     from bot.bot import bot as aiogram_bot
     from bot.bot import dp
-    from bot.routers import start, completion, cron, settings
+    from bot.routers import (
+        admin_control,
+        common,
+        reminders,
+        tasks,
+        notes,
+        monitors,
+        memory_kb,
+        news_weather,
+        reports_admin,
+        settings,
+        start,
+        completion,
+    )
     from bot.handlers import smart as smart_handler
     from bot.handlers import voice as voice_handler
 
@@ -68,8 +89,15 @@ async def main() -> None:
     # Inject db into routers and services BEFORE wiring them up. If we
     # registered the routers first, an early Telegram update could land
     # while db is still None and crash with AttributeError.
+    common.db = db
+    reminders.db = db
+    tasks.db = db
+    notes.db = db
+    monitors.db = db
+    memory_kb.db = db
+    news_weather.db = db
+    reports_admin.db = db
     completion.db = db
-    cron.db = db
     smart_handler.db = db
     voice_handler.db = db
     start.db = db
@@ -107,11 +135,16 @@ async def main() -> None:
 
     security_module.db = db
 
-    # Set Telegram menu commands. Admins see extra commands.
+    # Set Telegram menu commands. Admins see extra commands. Process-control
+    # commands are shown only to the owner IDs configured in .env.
+    from bot.settings import ADMIN_IDS
+
     try:
         commands = list(BASE_COMMANDS)
         if db.get_admin_user_ids():
             commands.extend(ADMIN_COMMANDS)
+        if ADMIN_IDS:
+            commands.extend(PROCESS_COMMANDS)
         await aiogram_bot.set_my_commands(
             commands, scope=BotCommandScopeAllPrivateChats()
         )
@@ -126,7 +159,14 @@ async def main() -> None:
     dp.include_routers(
         start.router,
         settings.router,
-        cron.router,
+        reminders.router,
+        tasks.router,
+        notes.router,
+        monitors.router,
+        memory_kb.router,
+        news_weather.router,
+        reports_admin.router,
+        admin_control.router,
         completion.router,
         voice_handler.router,
         smart_handler.router,
@@ -160,7 +200,14 @@ async def main() -> None:
         if recurring == "weekly":
             return (dt + timedelta(weeks=1)).isoformat()
         if recurring == "monthly":
-            return (dt + timedelta(days=30)).isoformat()
+            # Move to the same day next month, clamping to the last day of the
+            # month when needed (e.g. Jan 31 -> Feb 28/29).
+            year = dt.year + (dt.month // 12)
+            month = dt.month % 12 + 1
+            last_day = __import__("calendar").monthrange(year, month)[1]
+            day = min(dt.day, last_day)
+            nxt = dt.replace(year=year, month=month, day=day)
+            return nxt.isoformat()
         if recurring in (
             "monday",
             "tuesday",
@@ -275,7 +322,7 @@ async def main() -> None:
 
                 mid = m["id"]
                 url = m.get("url", "")
-                safe, _ = await cron._is_safe_monitor_url_async(url)
+                safe, _ = await common._is_safe_monitor_url_async(url)
                 if not safe:
                     db.update_monitor_status(mid, 0)
                     continue

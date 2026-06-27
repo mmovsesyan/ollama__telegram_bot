@@ -105,6 +105,23 @@ OLLAMA_MAX_CONCURRENT = int(os.getenv("OLLAMA_MAX_CONCURRENT", default="2"))
 # Get your key at https://ollama.com and set OLLAMA_WEB_API_KEY
 OLLAMA_WEB_API_KEY = os.getenv("OLLAMA_WEB_API_KEY", default="") or OLLAMA_API_KEY
 
+# Telegram IDs of admins allowed to control the bot process via Telegram.
+ADMIN_TELEGRAM_IDS = os.getenv("ADMIN_TELEGRAM_IDS", default="")
+
+
+def _parse_admin_ids(raw: str) -> set[int]:
+    ids: set[int] = set()
+    if not raw:
+        return ids
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+ADMIN_IDS = _parse_admin_ids(ADMIN_TELEGRAM_IDS)
+
 # Whisper model for voice/audio transcription.
 # Available models: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, large-v3, turbo
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", default="tiny")

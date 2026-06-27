@@ -9,7 +9,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.handlers.smart import smart_message_handler
-from bot.keyboards.reply import command_keyboard
 from bot.security import is_allowed
 from bot.services.voice import transcribe_voice
 

@@ -461,7 +461,7 @@ async def _search_duckduckgo_news(
 
 async def _search_ollama(query: str, max_results: int = 5) -> list[dict]:
     try:
-        from bot.routers.cron import ollama_web_search
+        from bot.routers.common import ollama_web_search
     except Exception as e:
         logger.warning("[OllamaSearch] import failed: %s", e)
         return []

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bot.services import digest as digest_module
-from bot.services.profile import local_to_utc, utc_to_local
+from bot.services.profile import local_to_utc
 
 
 class _FakeDb:

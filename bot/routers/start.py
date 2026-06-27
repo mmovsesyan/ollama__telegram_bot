@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.keyboards.reply import cancel_keyboard, command_keyboard
-from bot.security import is_admin, is_allowed
+from bot.security import is_allowed
 from bot.services.profile import resolve_timezone, now_in_tz
 from bot.states import BotStates
 
@@ -96,7 +96,7 @@ async def start_command(message: Message, state: FSMContext) -> None:
     )
 
     try:
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        from aiogram.types import InlineKeyboardButton
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         builder = InlineKeyboardBuilder()

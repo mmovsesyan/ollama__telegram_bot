@@ -1,3 +1,5 @@
+import logging
+
 from bot.intent.schemas import ToolContext, ToolResult
 from bot.intent.tools.base import BaseTool
 
@@ -27,9 +29,11 @@ class ChatTool(BaseTool):
                     from bot.routers.completion import generate
                     await generate(msg, context.user_id, context.message_text)
                     return ToolResult(text="", success=True)
-            except Exception:
-                # Fall through to non-streaming completion below.
-                pass
+            except Exception as exc:
+                # Fall through to non-streaming completion below. Log the cause
+                # so silent failures are diagnosable.
+                logger = logging.getLogger(__name__)
+                logger.warning("Streaming completion path failed: %s", exc)
 
         # Fallback: non-streaming completion if no message is attached or the
         # streaming path failed. Avoids importing bot.bot which requires a

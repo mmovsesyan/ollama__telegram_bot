@@ -151,7 +151,7 @@ async def search_kb_with_web_fallback(
 
     # KB empty — fall back to web search via the existing helper.
     try:
-        from bot.routers.cron import ollama_web_search
+        from bot.routers.common import ollama_web_search
     except Exception:
         return "", [], False
 

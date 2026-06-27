@@ -104,7 +104,7 @@ class TestKbServiceFallback:
         # No memories. Mock ollama_web_search to return one item.
         async def fake_search(query, max_results=5):
             return ({"results": [{"title": "Wiki", "url": "https://x.com", "content": "Some text"}]}, None)
-        with patch("bot.routers.cron.ollama_web_search", side_effect=fake_search):
+        with patch("bot.routers.common.ollama_web_search", side_effect=fake_search):
             text, hits, used_web = await kb_service.search_kb_with_web_fallback(8, "anything")
         assert used_web is True
         assert hits == []
@@ -115,7 +115,7 @@ class TestKbServiceFallback:
         kb_service.db = db
         async def fake_search(query, max_results=5):
             return ({"results": []}, None)
-        with patch("bot.routers.cron.ollama_web_search", side_effect=fake_search):
+        with patch("bot.routers.common.ollama_web_search", side_effect=fake_search):
             text, hits, used_web = await kb_service.search_kb_with_web_fallback(9, "nothing")
         assert text == ""
         assert hits == []
@@ -220,8 +220,11 @@ class TestKbSummary:
             db.add_memory(1, "fact", f"факт {i}")
 
         async def err_gen(*args, **kwargs):
-            yield (False, type("C", (), {"message": type("M", (), {"content": ""})})())
-            yield (True, OllamaErrorChunk(error="model unavailable"))
+            try:
+                yield (False, type("C", (), {"message": type("M", (), {"content": ""})})())
+                yield (True, OllamaErrorChunk(error="model unavailable"))
+            finally:
+                pass
 
         with patch("bot.services.kb.generate_chat_completion", side_effect=err_gen):
             text = await kb_service.summarize_kb(1)
@@ -278,7 +281,7 @@ class TestKbFormatting:
                 None,
             )
 
-        with patch("bot.routers.cron.ollama_web_search", side_effect=fake_search):
+        with patch("bot.routers.common.ollama_web_search", side_effect=fake_search):
             text, hits, used_web = await kb_service.search_kb_with_web_fallback(11, "x")
         assert used_web is True
         assert "интернет" in text.lower()
@@ -292,7 +295,10 @@ class TestKbExtractIntegration:
         from bot.services.kb_extract import extract_facts_from_exchange
 
         async def fake_gen(*args, **kwargs):
-            yield (False, type("C", (), {"message": type("M", (), {"content": "[fact] Пользователь любит Python"})})())
+            try:
+                yield (False, type("C", (), {"message": type("M", (), {"content": "[fact] Пользователь любит Python"})})())
+            finally:
+                pass
 
         with patch("bot.services.kb_extract.generate_chat_completion", side_effect=fake_gen):
             saved = await extract_facts_from_exchange(
@@ -313,7 +319,10 @@ class TestKbExtractIntegration:
         db.add_memory(1, "fact", "Пользователь любит Python")
 
         async def fake_gen(*args, **kwargs):
-            yield (False, type("C", (), {"message": type("M", (), {"content": "[fact] пользователь любит python"})})())
+            try:
+                yield (False, type("C", (), {"message": type("M", (), {"content": "[fact] пользователь любит python"})})())
+            finally:
+                pass
 
         with patch("bot.services.kb_extract.generate_chat_completion", side_effect=fake_gen):
             saved = await extract_facts_from_exchange(

@@ -2,7 +2,6 @@ import sys
 from types import ModuleType
 
 import pytest
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 # bot.bot raises at import if TELEGRAM_TOKEN is missing; provide a fake module

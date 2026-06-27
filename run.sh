@@ -94,8 +94,8 @@ start_bot() {
     echo "🚀 Запускаю бота..."
     # Use exec inside the subshell so the python process REPLACES the
     # shell wrapper. $! then points at python directly, and kill <pid>
-    # actually stops the bot.
-    nohup bash -c "exec poetry run python '$APP_DIR/main.py'" >> "$LOG_FILE" 2>&1 &
+    # actually stops the bot. The watchdog keeps the bot alive after crashes.
+    nohup bash -c "exec poetry run python '$APP_DIR/scripts/supervisor_watchdog.py'" >> "$LOG_FILE" 2>&1 &
     BOT_PID=$!
     # Give the wrapper a moment to exec into python so the recorded PID
     # is the real one even if the user inspects it immediately.
@@ -154,8 +154,12 @@ case "${1:-start}" in
         poetry_install_deps
         warmup_whisper
         ;;
+    menu)
+        ensure_poetry
+        exec poetry run python "$APP_DIR/scripts/menu.py"
+        ;;
     *)
-        echo "Использование: $0 {start|stop|restart|status|logs|env|deps}"
+        echo "Использование: $0 {start|stop|restart|status|logs|env|deps|menu}"
         exit 1
         ;;
 esac

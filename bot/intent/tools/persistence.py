@@ -31,8 +31,8 @@ class MemoryTool(BaseTool):
             return ToolResult(text="🧠 Что запомнить?", success=False)
         if context.db is None:
             return ToolResult(text="База данных недоступна.", success=False)
-        # Late import to avoid circular: cron.py imports services, which imports tools.
-        from bot.routers.cron import _classify_memory
+        # Late import to avoid circular: common.py imports services, which imports tools.
+        from bot.routers.common import _classify_memory
 
         category = await _classify_memory(content)
         mid = context.db.add_memory(context.user_id, category, content)
@@ -76,7 +76,7 @@ class MonitorTool(BaseTool):
         if "://" not in url:
             url = f"http://{url}"
         # Late import to avoid circular imports at module load time.
-        from bot.routers.cron import _is_safe_monitor_url_async
+        from bot.routers.common import _is_safe_monitor_url_async
 
         safe, reason = await _is_safe_monitor_url_async(url)
         if not safe:

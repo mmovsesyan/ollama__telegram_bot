@@ -413,7 +413,36 @@ class Database:
                 return dict(row)
             return None
 
+    # Whitelist of columns that can be set via set_user_prefs. Prevents
+    # accidental SQL injection if a caller passes user-controlled kwargs.
+    USER_PREFS_COLUMNS = frozenset(
+        {
+            "default_model",
+            "language",
+            "style",
+            "notes",
+            "name",
+            "timezone",
+            "briefing_enabled",
+            "briefing_time",
+            "proactive_enabled",
+            "news_categories",
+            "voice_output_enabled",
+            "briefing_city",
+            "last_briefing_date",
+            "smart_reminders_enabled",
+            "digest_enabled",
+            "digest_time",
+            "last_digest_date",
+            "retention_days",
+        }
+    )
+
     def set_user_prefs(self, user_id: int, **kwargs):
+        unknown = set(kwargs.keys()) - self.USER_PREFS_COLUMNS
+        if unknown:
+            raise ValueError(f"Invalid user_prefs column(s): {', '.join(sorted(unknown))}")
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "SELECT 1 FROM user_prefs WHERE user_id = ?", (user_id,)
@@ -522,16 +551,23 @@ class Database:
             return dict(row) if row else None
 
     def disable_reminder(self, reminder_id: int):
-        """Hard-delete the reminder. Kept the name `disable_reminder` for
-        backward compat with callers; behavior is now permanent removal so
-        DB-side ids don't accumulate after the user clears their list."""
+        """Soft-delete the reminder by marking it disabled.
+
+        Historically this hard-deleted the row; we now keep it so the user
+        can review completed/cleared reminders later while still preventing
+        id accumulation from spamming the active list.
+        """
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+            conn.execute(
+                "UPDATE reminders SET enabled = 0 WHERE id = ?", (reminder_id,)
+            )
             conn.commit()
 
     def delete_reminder(self, reminder_id: int):
-        """Alias for disable_reminder; new callers should prefer this name."""
-        self.disable_reminder(reminder_id)
+        """Permanently remove a reminder. Use disable_reminder for normal UI deletes."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+            conn.commit()
 
     def add_monitor(
         self,

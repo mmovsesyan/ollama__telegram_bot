@@ -1,52 +1,44 @@
-"""Smart task execution: detect intent and call real APIs if possible."""
+"""Compatibility shim for smart task execution.
 
-import re
+The original `execute_smart()` lived here and routed on keywords. Its behavior
+is now provided by the intent pipeline (``WeatherTool`` in
+``bot/intent/tools/weather.py``) so this module only re-exports a thin wrapper
+for the scheduler's reminder execution path.
+"""
 
-from bot.services.weather import get_weather
-
-
-def _extract_city(text: str) -> str | None:
-    """Extract city name from weather-like query.
-
-    Strips common keywords with word-boundary anchors so short prepositions
-    ("в", "по", "для") don't bleed into multi-word city names like
-    "Санкт-Петербург".
-    """
-    text = text.lower()
-    # Anchored patterns — \b prevents stripping "в" from inside "Санкт-Петербурге"
-    keywords = [
-        r"\bпогода\b", r"\bпогоду\b", r"\bweather\b", r"\bтемпература\b",
-        r"\bпрогноз(а|у)?\b", r"\bполная\b", r"\bтекущая\b", r"\bсейчас\b",
-        r"\btoday\b", r"\bcurrent\b", r"\bдля\b", r"\bв\b", r"\bfor\b",
-        r"\bin\b", r"\bпо\b", r"\bгород\b", r"\bcity\b", r"\bотправить\b",
-        r"\bприслать\b", r"\bскажи\b", r"\bдай\b", r"\bузнать\b",
-        r"\bактуальная\b", r"\bна\s+сегодня\b", r"\bна\s+завтра\b",
-    ]
-    cleaned = text
-    for kw in keywords:
-        cleaned = re.sub(kw, " ", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[^\w\s\-]", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    words = cleaned.split()
-    if not words:
-        return None
-    return words[0].capitalize()
+from bot.intent.schemas import IntentArgs, IntentResult, ToolContext
+from bot.intent.tools.weather import WeatherTool
 
 
 async def execute_smart(content: str) -> str | None:
-    """Detect intent and call real APIs if possible.
-    Returns result string if handled, None to fall back to generic LLM."""
-    text_lower = content.lower()
+    """Detect simple actionable intents and call real APIs if possible.
 
-    weather_indicators = ["погода", "weather", "температура", "прогноз погоды"]
-    if any(w in text_lower for w in weather_indicators):
-        city = _extract_city(content)
-        if city:
-            result, error = await get_weather(city)
-            if result:
-                return result
-            if error:
-                return f"❌ Ошибка погоды: {error}"
-        return "❌ Укажите город для погоды. Пример: погода Москва"
+    Returns a result string when handled, or ``None`` to fall back to the
+    generic LLM completion path.
+    """
+    text = (content or "").strip()
+    if not text:
+        return None
+
+    lowered = text.lower()
+    weather_indicators = {"погода", "weather", "температура", "прогноз погоды"}
+    if any(w in lowered for w in weather_indicators):
+        # Reuse the intent tool so behavior stays in one place.
+        tool = WeatherTool()
+        context = ToolContext(
+            user_id=0,
+            message_text=text,
+            args=IntentArgs(query=text),
+            intent_result=IntentResult(
+                intent="weather",
+                tool="weather",
+                args=IntentArgs(query=text),
+                confidence=1.0,
+            ),
+        )
+        result = await tool.execute(context)
+        if result.success:
+            return result.text
+        return result.text or "❌ Не удалось получить погоду"
 
     return None

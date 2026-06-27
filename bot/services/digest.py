@@ -7,12 +7,12 @@ takeaway. Sent automatically at a user-configured time (default 20:00).
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from bot.ollama import OllamaChatMessage, generate_chat_completion
 from bot.ollama.dto import OllamaErrorChunk
 from bot.services import briefing as briefing_service
-from bot.services.profile import get_zoneinfo, local_to_utc, now_in_tz, utc_to_local
+from bot.services.profile import local_to_utc, now_in_tz, utc_to_local
 from bot.settings import OLLAMA_MODEL
 
 logger = logging.getLogger(__name__)

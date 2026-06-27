@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from bot.services import reminder_suggest as rs_module
 
@@ -115,8 +115,11 @@ async def test_analyze_filters_by_confidence_and_dedup():
     )
     raw = '[{"type": "note", "content": "buy milk", "confidence": 0.9}, {"type": "reminder", "content": "call mom tomorrow 9", "time": "завтра в 9", "confidence": 0.85}]'
     async def fake_gen(*args, **kwargs):
-        async for item in _async_gen(raw):
-            yield item
+        try:
+            async for item in _async_gen(raw):
+                yield item
+        finally:
+            pass
 
     with patch(
         "bot.services.reminder_suggest.generate_chat_completion",
@@ -132,8 +135,11 @@ async def test_analyze_filters_by_confidence_and_dedup():
 async def test_analyze_returns_empty_on_llm_error():
     rs_module.db = _FakeDb(messages=[{"role": "user", "content": "hello"}])
     async def fake_err_gen(*args, **kwargs):
-        async for item in _async_gen_error():
-            yield item
+        try:
+            async for item in _async_gen_error():
+                yield item
+        finally:
+            pass
 
     with patch(
         "bot.services.reminder_suggest.generate_chat_completion",

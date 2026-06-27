@@ -1,4 +1,3 @@
-from datetime import datetime
 from urllib.parse import urlparse
 
 from bot.intent.schemas import ToolContext, ToolResult
@@ -67,7 +66,7 @@ class SearchTool(BaseTool):
         query = (context.args.query or context.message_text).strip()
         if not query:
             return ToolResult(text="🔍 Что искать?", success=False)
-        from bot.routers.cron import ollama_web_search
+        from bot.routers.common import ollama_web_search
         result, error = await ollama_web_search(query, max_results=5)
         if error:
             return ToolResult(text=f"❌ Ошибка поиска: {error}", success=False)

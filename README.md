@@ -105,6 +105,21 @@ cd ollama__telegram_bot
 ./run.sh logs       # tail logs in real time
 ./run.sh env        # recreate .env
 ./run.sh deps       # install/upgrade dependencies
+./run.sh menu       # interactive CLI menu
+```
+
+Auto-start on boot / auto-restart on crash:
+
+```bash
+./install_service.sh   # systemd on Linux or LaunchAgent on macOS
+```
+
+The installed service now runs `scripts/supervisor_watchdog.py`, which keeps
+the bot alive after crashes. Owner commands in Telegram (when `ADMIN_TELEGRAM_IDS`
+is set in `.env`):
+
+```
+/bot_status  /bot_start  /bot_stop  /bot_restart  /bot_logs
 ```
 
 Auto-update:

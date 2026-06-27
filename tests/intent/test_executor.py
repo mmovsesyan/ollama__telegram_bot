@@ -5,6 +5,21 @@ from bot.intent.executor import IntentExecutor
 from bot.intent.schemas import IntentArgs, IntentResult, ToolContext, ToolResult
 
 
+def _sync_tool_result(expected: ToolResult):
+    """Build a normal mock whose execute method is an async function.
+
+    AsyncMock is a coroutine by default; assigning `return_value` causes a
+    RuntimeWarning when the mock's internal coroutine is never awaited. Using
+    a plain MagicMock with an async function attribute avoids that while
+    preserving `assert_called_once()` and `call_args`.
+    """
+    mock_tool = MagicMock()
+    async def _execute(*args, **kwargs):
+        return expected
+    mock_tool.execute = MagicMock(side_effect=_execute)
+    return mock_tool
+
+
 class TestIntentExecutor:
     @pytest.mark.asyncio
     async def test_high_confidence_reminder_dispatched_to_remind_tool(self):
@@ -16,8 +31,7 @@ class TestIntentExecutor:
         )
         expected = ToolResult(text="done", success=True)
 
-        mock_tool = AsyncMock()
-        mock_tool.execute.return_value = expected
+        mock_tool = _sync_tool_result(expected)
         registry = MagicMock()
         registry.get.return_value = mock_tool
 
@@ -29,7 +43,7 @@ class TestIntentExecutor:
         )
 
         registry.get.assert_called_once_with("remind")
-        mock_tool.execute.assert_awaited_once()
+        mock_tool.execute.assert_called_once()
         assert tool_result.text == "done"
 
         context = mock_tool.execute.call_args[0][0]
@@ -51,8 +65,7 @@ class TestIntentExecutor:
         )
         expected = ToolResult(text="done", success=True)
 
-        mock_tool = AsyncMock()
-        mock_tool.execute.return_value = expected
+        mock_tool = _sync_tool_result(expected)
         registry = MagicMock()
         registry.get.return_value = mock_tool
 
@@ -207,15 +220,17 @@ class TestIntentExecutor:
             confidence=0.95,
         )
 
-        mock_tool = AsyncMock()
-        mock_tool.execute.side_effect = RuntimeError("db failed")
+        mock_tool = MagicMock()
+        async def _execute(*args, **kwargs):
+            raise RuntimeError("db failed")
+        mock_tool.execute = MagicMock(side_effect=_execute)
         registry = MagicMock()
         registry.get.return_value = mock_tool
 
         executor = IntentExecutor(registry=registry)
-        executor.chat_tool.execute = AsyncMock(
-            return_value=ToolResult(text="sorry", success=True)
-        )
+        async def _chat_execute(*args, **kwargs):
+            return ToolResult(text="sorry", success=True)
+        executor.chat_tool.execute = MagicMock(side_effect=_chat_execute)
 
         tool_result = await executor.execute(
             user_id=6,
@@ -224,5 +239,5 @@ class TestIntentExecutor:
         )
 
         assert tool_result.text == "sorry"
-        mock_tool.execute.assert_awaited_once()
-        executor.chat_tool.execute.assert_awaited_once()
+        mock_tool.execute.assert_called_once()
+        executor.chat_tool.execute.assert_called_once()

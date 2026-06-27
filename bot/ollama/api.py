@@ -7,6 +7,7 @@ Supports:
 - OpenAI-compatible endpoints as fallback (/v1/chat/completions, /v1/models)
 """
 
+import os
 import time
 from json import loads
 from logging import getLogger
@@ -114,7 +115,10 @@ async def get_installed_models(*, cache_ttl: float | None = None) -> list[Ollama
         if models is None:
             models = await _try_get_openai_models(session)
         if models is None:
-            models = []
+            # Do not cache an empty list caused by endpoint failure; the next
+            # call should retry so a transient outage doesn't lock the bot out
+            # of model selection for 5 minutes.
+            return []
 
     _models_cache = models
     _models_cache_time = now
@@ -130,12 +134,16 @@ async def model_is_installed(model_id: str) -> bool:
 
 
 async def ollama_is_healthy() -> bool:
-    try:
-        await get_installed_models(cache_ttl=0)
-        return True
-    except Exception as e:
-        logger.warning(f"Ollama health check failed: {e}")
-        return False
+    """Return True only if the Ollama model-list endpoint actually responds.
+
+    We use the raw helper that returns None on failure rather than
+    get_installed_models(), which swallows errors and returns [].
+    """
+    async with _session() as session:
+        models = await _try_get_ollama_models(session)
+        if models is None:
+            models = await _try_get_openai_models(session)
+    return models is not None
 
 
 def _build_ollama_chat_payload(
@@ -189,10 +197,13 @@ async def _stream_ollama_chat(
 ) -> AsyncGenerator[dict[str, Any], Any]:
     host = _normalize_host(OLLAMA_API_HOST)
     payload = _build_ollama_chat_payload(messages, model, options)
+    chat_timeout = aiohttp.ClientTimeout(
+        total=int(os.getenv("OLLAMA_CHAT_TIMEOUT", "300"))
+    )
     async with session.post(
         f"{host}/api/chat",
         json=payload,
-        timeout=aiohttp.ClientTimeout(total=600),
+        timeout=chat_timeout,
     ) as response:
         if response.status >= 400:
             text = await response.text()
@@ -218,10 +229,13 @@ async def _stream_openai_chat(
 ) -> AsyncGenerator[dict[str, Any], Any]:
     host = _normalize_host(OLLAMA_API_HOST)
     payload = _build_openai_chat_payload(messages, model, options)
+    chat_timeout = aiohttp.ClientTimeout(
+        total=int(os.getenv("OLLAMA_CHAT_TIMEOUT", "300"))
+    )
     async with session.post(
         f"{host}/v1/chat/completions",
         json=payload,
-        timeout=aiohttp.ClientTimeout(total=600),
+        timeout=chat_timeout,
     ) as response:
         if response.status >= 400:
             text = await response.text()

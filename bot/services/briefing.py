@@ -5,9 +5,9 @@ and a memory-based tip, then composes a concise Telegram-friendly message.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
-from bot.services.profile import get_zoneinfo, local_to_utc, now_in_tz, utc_to_local
+from bot.services.profile import local_to_utc, now_in_tz, utc_to_local
 
 logger = logging.getLogger(__name__)
 
