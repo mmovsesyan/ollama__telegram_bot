@@ -10,6 +10,7 @@ Used by the Telegram admin control panel and by the CLI menu so there is a
 single source of truth for whether the bot is running.
 """
 
+import asyncio
 import logging
 import os
 import platform
@@ -17,7 +18,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def _python_cmd() -> list[str]:
     return [sys.executable, str(_project_root() / "main.py")]
 
 
-def is_running() -> bool:
+async def is_running() -> bool:
     if not PID_FILE.exists():
         return False
     try:
@@ -72,7 +72,7 @@ def is_running() -> bool:
         return False
 
 
-def read_pid() -> int | None:
+async def read_pid() -> int | None:
     if not PID_FILE.exists():
         return None
     try:
@@ -81,9 +81,9 @@ def read_pid() -> int | None:
         return None
 
 
-def start() -> tuple[bool, str]:
-    if is_running():
-        return False, f"Бот уже запущен (PID {read_pid()})."
+async def start() -> tuple[bool, str]:
+    if await is_running():
+        return False, f"Бот уже запущен (PID {await read_pid()})."
 
     env = os.environ.copy()
     env["BOT_SUPERVISED"] = "1"
@@ -97,23 +97,36 @@ def start() -> tuple[bool, str]:
 
     cmd = _python_cmd()
     try:
-        with LOG_FILE.open("ab") as log_fp:
-            # Command is constructed from hard-coded paths and the Poetry binary
-            # discovered on PATH; no user input is passed to the shell.
-            proc = subprocess.Popen(  # nosec B603
-                cmd,
-                cwd=_project_root(),
-                stdout=log_fp,
-                stderr=subprocess.STDOUT,
-                env=env,
-                start_new_session=True,
-            )
+        log_fp = LOG_FILE.open("ab")
     except Exception as exc:
+        logger.exception("Failed to open log file")
+        return False, f"Не удалось открыть лог-файл: {exc}"
+
+    try:
+        # Command is constructed from hard-coded paths and the Poetry binary
+        # discovered on PATH; no user input is passed to the shell.
+        proc = subprocess.Popen(  # nosec B603
+            cmd,
+            cwd=_project_root(),
+            stdout=log_fp,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        log_fp.close()
         logger.exception("Failed to start bot")
         return False, f"Не удалось запустить бота: {exc}"
 
+    # Don't let the log file descriptor leak in the supervisor process; the
+    # child inherited it via Popen and will keep writing to it.
+    try:
+        log_fp.close()
+    except Exception:
+        pass
+
     # Wait briefly to catch immediate startup failure.
-    time.sleep(2)
+    await asyncio.sleep(2)
     if proc.poll() is not None:
         return False, f"Процесс завершился сразу (код {proc.poll()}). Смотри {LOG_FILE}."
 
@@ -121,30 +134,30 @@ def start() -> tuple[bool, str]:
     return True, f"Бот запущен (PID {proc.pid})."
 
 
-def stop() -> tuple[bool, str]:
-    pid = read_pid()
+async def stop() -> tuple[bool, str]:
+    pid = await read_pid()
     if pid is None:
         # Also try to kill any stray process matching main.py.
-        _kill_stragglers()
+        await _kill_stragglers()
         return True, "Бот не был запущен (PID-файл отсутствовал)."
 
-    if not is_running():
+    if not await is_running():
         PID_FILE.unlink(missing_ok=True)
-        _kill_stragglers()
+        await _kill_stragglers()
         return True, "Бот не работал (PID-файл устарел)."
 
     try:
-        _graceful_stop(pid)
+        await _graceful_stop(pid)
     except Exception as exc:
         logger.warning("Graceful stop failed for PID %s: %s", pid, exc)
         return False, f"Не удалось остановить бота: {exc}"
 
     PID_FILE.unlink(missing_ok=True)
-    _kill_stragglers()
+    await _kill_stragglers()
     return True, "Бот остановлен."
 
 
-def _graceful_stop(pid: int) -> None:
+async def _graceful_stop(pid: int) -> None:
     if platform.system() == "Windows":
         import ctypes
 
@@ -157,19 +170,19 @@ def _graceful_stop(pid: int) -> None:
 
     os.kill(pid, signal.SIGTERM)
     # Wait up to 10 seconds for graceful shutdown.
-    deadline = time.time() + 10
-    while time.time() < deadline:
+    deadline = asyncio.get_event_loop().time() + 10
+    while asyncio.get_event_loop().time() < deadline:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return
         except PermissionError:
             return
-        time.sleep(0.2)
+        await asyncio.sleep(0.2)
     os.kill(pid, signal.SIGKILL)
 
 
-def _kill_stragglers() -> None:
+async def _kill_stragglers() -> None:
     """Kill any python process running this project's main.py."""
     main_py = str(_project_root() / "main.py")
     if platform.system() == "Windows":
@@ -203,20 +216,20 @@ def _kill_stragglers() -> None:
             logger.warning("Failed to kill stray bot process %s: %s", pid_str, exc)
 
 
-def restart() -> tuple[bool, str]:
-    stop()
-    ok, msg = start()
+async def restart() -> tuple[bool, str]:
+    await stop()
+    ok, msg = await start()
     return ok, f"Рестарт: {msg}"
 
 
-def status() -> str:
-    if not is_running():
+async def status() -> str:
+    if not await is_running():
         return "❌ Бот не запущен"
-    pid = read_pid()
+    pid = await read_pid()
     return f"✅ Бот работает (PID {pid})"
 
 
-def tail_logs(lines: int = 30) -> str:
+async def tail_logs(lines: int = 30) -> str:
     if not LOG_FILE.exists():
         return "Лог-файл пока не создан."
     try:

@@ -4,6 +4,7 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$APP_DIR/.env"
 PID_FILE="$APP_DIR/bot.pid"
+WATCHDOG_PID_FILE="$APP_DIR/watchdog.pid"
 LOG_FILE="$APP_DIR/bot.log"
 
 cd "$APP_DIR"
@@ -47,35 +48,37 @@ ensure_env() {
 }
 
 stop_existing() {
-    # Always try to kill ANY python instance running this project's main.py.
-    # The pidfile alone is unreliable: nohup'd `poetry run` writes the
-    # wrapper's PID, not the python child's, so killing the wrapper leaves
-    # the bot alive. Match the absolute main.py path to avoid touching
-    # other python processes.
-    if [[ -f "$PID_FILE" ]]; then
-        old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-            echo "🛑 Останавливаю предыдущий процесс бота (PID $old_pid)..."
-            kill "$old_pid" 2>/dev/null || true
+    # Stop both the watchdog (if started via run.sh) and the bot main process.
+    # The supervisor writes the bot's main.py PID to $PID_FILE; run.sh writes
+    # the watchdog PID to $WATCHDOG_PID_FILE. We clean up both so that restart
+    # does not leave an old watchdog trying to resurrect a killed bot.
+    for pid_file in "$WATCHDOG_PID_FILE" "$PID_FILE"; do
+        if [[ -f "$pid_file" ]]; then
+            old_pid=$(cat "$pid_file" 2>/dev/null || true)
+            if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+                echo "🛑 Останавливаю процесс $pid_file (PID $old_pid)..."
+                kill "$old_pid" 2>/dev/null || true
+            fi
+            rm -f "$pid_file"
         fi
-        rm -f "$PID_FILE"
-    fi
+    done
 
-    # Catch the actual python child the wrapper spawned.
-    if [[ -f "$APP_DIR/main.py" ]]; then
+    # Catch any remaining python processes running this project's main.py or
+    # watchdog. Match absolute paths to avoid touching unrelated python work.
+    for pattern in "python.*$APP_DIR/main.py" "python.*$APP_DIR/scripts/supervisor_watchdog.py"; do
         local stragglers
-        stragglers=$(pgrep -f "python.*$APP_DIR/main.py" 2>/dev/null || true)
+        stragglers=$(pgrep -f "$pattern" 2>/dev/null || true)
         if [[ -n "$stragglers" ]]; then
-            echo "🛑 Найдены ещё живые Python-процессы бота: $stragglers"
+            echo "🛑 Найдены живые процессы по '$pattern': $stragglers"
             echo "$stragglers" | xargs -r kill 2>/dev/null || true
             sleep 2
-            stragglers=$(pgrep -f "python.*$APP_DIR/main.py" 2>/dev/null || true)
+            stragglers=$(pgrep -f "$pattern" 2>/dev/null || true)
             if [[ -n "$stragglers" ]]; then
                 echo "🛑 Не сдаются, шлю SIGKILL: $stragglers"
                 echo "$stragglers" | xargs -r kill -9 2>/dev/null || true
             fi
         fi
-    fi
+    done
 }
 
 start_bot() {
@@ -91,36 +94,40 @@ start_bot() {
     ensure_env
     stop_existing
 
-    echo "🚀 Запускаю бота..."
-    # Use exec inside the subshell so the python process REPLACES the
-    # shell wrapper. $! then points at python directly, and kill <pid>
-    # actually stops the bot. The watchdog keeps the bot alive after crashes.
+    echo "🚀 Запускаю бота через watchdog..."
+    # The watchdog is responsible for starting and restarting main.py. We
+    # keep its PID separate from the bot PID (written by supervisor.py) so
+    # that status checks actually reflect whether the bot is alive.
     nohup bash -c "exec poetry run python '$APP_DIR/scripts/supervisor_watchdog.py'" >> "$LOG_FILE" 2>&1 &
-    BOT_PID=$!
-    # Give the wrapper a moment to exec into python so the recorded PID
-    # is the real one even if the user inspects it immediately.
+    WATCHDOG_PID=$!
     sleep 1
-    # If exec did its job, $BOT_PID is python. If for some reason there's
-    # still a poetry wrapper around, find the python child under it.
-    if ! ps -p "$BOT_PID" -o cmd= 2>/dev/null | grep -q "main.py"; then
-        child_pid=$(pgrep -P "$BOT_PID" -f "python.*main.py" 2>/dev/null | head -1 || true)
-        if [[ -n "$child_pid" ]]; then
-            BOT_PID="$child_pid"
-        fi
+    # Verify the watchdog is still alive; if not, the log will show why.
+    if ! kill -0 "$WATCHDOG_PID" 2>/dev/null; then
+        echo "❌ Watchdog не удалось запустить. Смотри $LOG_FILE"
+        return 1
     fi
-    echo "$BOT_PID" > "$PID_FILE"
-    echo "✅ Бот запущен. PID: $BOT_PID"
+    echo "$WATCHDOG_PID" > "$WATCHDOG_PID_FILE"
+    echo "✅ Watchdog запущен. PID: $WATCHDOG_PID"
     echo "   Лог: tail -f $LOG_FILE"
+    echo "   Бот будет поднят watchdog'ом в течение нескольких секунд."
 }
 
 status_bot() {
+    # The bot's main.py PID is written by supervisor.py; the watchdog PID is
+    # written by run.sh. We report both so the operator can see the whole
+    # picture.
+    local bot_pid watchdog_pid
     if [[ -f "$PID_FILE" ]]; then
-        pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            echo "✅ Бот работает (PID $pid)"
-        else
-            echo "⚠️  PID-файл есть, но процесс не запущен"
-        fi
+        bot_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+    fi
+    if [[ -f "$WATCHDOG_PID_FILE" ]]; then
+        watchdog_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    fi
+
+    if [[ -n "$bot_pid" ]] && kill -0 "$bot_pid" 2>/dev/null; then
+        echo "✅ Бот работает (PID $bot_pid)"
+    elif [[ -n "$watchdog_pid" ]] && kill -0 "$watchdog_pid" 2>/dev/null; then
+        echo "⏳ Watchdog работает (PID $watchdog_pid), бот поднимается..."
     else
         echo "❌ Бот не запущен"
     fi

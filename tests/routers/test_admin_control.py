@@ -43,9 +43,7 @@ async def test_bot_status_hidden_from_non_admin():
 @pytest.mark.asyncio
 async def test_bot_start_calls_supervisor():
     with patch.object(ac_module, "ADMIN_IDS", {42}):
-        async def fake_start():
-            return True, "ok"
-        with patch.object(ac_module.supervisor, "start", side_effect=fake_start):
+        with patch.object(ac_module.supervisor, "start", new=AsyncMock(return_value=(True, "ok"))):
             msg = _message(42, "/bot_start")
             state = MagicMock()
             state.clear = AsyncMock()
@@ -58,7 +56,7 @@ async def test_bot_start_calls_supervisor():
 @pytest.mark.asyncio
 async def test_bot_logs_returns_preformatted_text():
     with patch.object(ac_module, "ADMIN_IDS", {42}):
-        with patch.object(ac_module.supervisor, "tail_logs", return_value="<pre>log</pre>"):
+        with patch.object(ac_module.supervisor, "tail_logs", new=AsyncMock(return_value="<pre>log</pre>")):
             msg = _message(42, "/bot_logs")
             state = MagicMock()
             state.clear = AsyncMock()

@@ -77,7 +77,7 @@ async def cmd_bot_logs(message: Message, state: FSMContext):
         return
     if not _is_bot_admin(message.from_user.id):
         return
-    text = supervisor.tail_logs(lines=30)
+    text = await supervisor.tail_logs(lines=30)
     # If the log is wrapped in <pre>, use HTML parse mode; otherwise plain text.
     parse_mode = "HTML" if text.startswith("<pre>") else None
     await message.answer(text, reply_markup=command_keyboard, parse_mode=parse_mode)

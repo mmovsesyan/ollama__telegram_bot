@@ -5,6 +5,7 @@ Works on macOS, Linux and any terminal that supports ANSI escape codes.
 Provides start / stop / restart / status / logs / install service actions.
 """
 
+import asyncio
 import shutil
 import signal
 import subprocess
@@ -23,13 +24,13 @@ def clear() -> None:
     print("\033[2J\033[H", end="")
 
 
-def header() -> None:
+async def header() -> None:
     clear()
     print("╔══════════════════════════════════════════╗")
     print("║     🤖 Ollama Telegram Bot Manager       ║")
     print("╚══════════════════════════════════════════╝")
     print(f"   📁 {ROOT}")
-    print(f"   📊 {status()}")
+    print(f"   📊 {await status()}")
     print()
 
 
@@ -41,8 +42,8 @@ def prompt() -> str:
     return input("Выбор: ").strip()
 
 
-def show_logs() -> None:
-    print(tail_logs(lines=40))
+async def show_logs() -> None:
+    print(await tail_logs(lines=40))
     input("\nНажми Enter...")
 
 
@@ -63,31 +64,31 @@ def install_service() -> None:
     input("\nНажми Enter...")
 
 
-def main() -> None:
+async def main() -> None:
     # Graceful shutdown on Ctrl+C.
     signal.signal(signal.SIGINT, lambda _signum, _frame: sys.exit(0))
 
     while True:
-        header()
+        await header()
         choice = prompt()
 
         if choice == "1":
-            ok, msg = start()
+            ok, msg = await start()
             print(("✅ " if ok else "❌ ") + msg)
             time.sleep(1)
         elif choice == "2":
-            ok, msg = stop()
+            ok, msg = await stop()
             print(("✅ " if ok else "❌ ") + msg)
             time.sleep(1)
         elif choice == "3":
-            ok, msg = restart()
+            ok, msg = await restart()
             print(("✅ " if ok else "❌ ") + msg)
             time.sleep(1)
         elif choice == "4":
-            print(status())
+            print(await status())
             input("\nНажми Enter...")
         elif choice == "5":
-            show_logs()
+            await show_logs()
         elif choice == "6":
             install_service()
         elif choice == "0":
@@ -99,4 +100,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

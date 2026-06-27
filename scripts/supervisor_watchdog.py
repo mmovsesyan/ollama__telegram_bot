@@ -10,10 +10,10 @@ Usage:
 It polls bot.pid and re-runs supervisor.start() whenever the bot disappears.
 """
 
+import asyncio
 import logging
 import os
 import sys
-import time
 from pathlib import Path
 
 # Add project root to path so we can import bot.services.supervisor.
@@ -31,7 +31,7 @@ logger = logging.getLogger("watchdog")
 CHECK_INTERVAL = 10
 
 
-def main() -> None:
+async def main() -> None:
     if os.environ.get("BOT_WATCHDOG") == "1":
         logger.error("Detected nested watchdog; aborting to avoid fork bomb.")
         sys.exit(1)
@@ -40,21 +40,21 @@ def main() -> None:
     logger.info("Watchdog started. Root: %s", ROOT)
 
     while True:
-        if not is_running():
+        if not await is_running():
             logger.warning("Bot not running; restarting...")
-            ok, msg = start()
+            ok, msg = await start()
             if not ok:
                 logger.error("Restart failed: %s", msg)
-                time.sleep(30)
+                await asyncio.sleep(30)
                 continue
             logger.info("Restart succeeded: %s", msg)
-        time.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Stopping watchdog and bot...")
-        stop()
+        asyncio.run(stop())
         sys.exit(0)
