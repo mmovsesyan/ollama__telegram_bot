@@ -231,6 +231,35 @@ REGRESSION_CASES = [
         "news",
         {},
     ),
+    # Topic-only fast path: short subjects bypass the LLM router entirely.
+    (
+        "игры",
+        '{"intent":"news","tool":"news","args":{"query":"игры"},"confidence":0.9}',
+        "news",
+        "news",
+        {"query": "игры"},
+    ),
+    (
+        "Tesla",
+        '{"intent":"news","tool":"news","args":{"query":"Tesla"},"confidence":0.9}',
+        "news",
+        "news",
+        {"query": "Tesla"},
+    ),
+    (
+        "ai",
+        '{"intent":"news","tool":"news","args":{"query":"ai"},"confidence":0.9}',
+        "news",
+        "news",
+        {"query": "ai"},
+    ),
+    (
+        "биткоин",
+        '{"intent":"news","tool":"news","args":{"query":"биткоин"},"confidence":0.9}',
+        "news",
+        "news",
+        {"query": "биткоин"},
+    ),
     # --- add_monitor / monitor ---
     (
         "следи за сайтом example.com",

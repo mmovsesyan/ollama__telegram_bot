@@ -80,6 +80,12 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     if state is not None:
         await state.clear()
 
+    # Give the user immediate feedback before any routing/generation work.
+    try:
+        await message.bot.send_chat_action(chat_id=user_id, action="typing")
+    except Exception:
+        logger.debug("Failed to send typing action for user_id=%s", user_id)
+
     # Broad catch-all keeps the Telegram handler from crashing on any pipeline bug;
     # individual tools already have their own exception handling.
     try:

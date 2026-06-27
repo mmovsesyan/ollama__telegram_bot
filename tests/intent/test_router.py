@@ -288,3 +288,39 @@ class TestLLMIntentRouter:
         assert result.intent == "chat"
         assert result.tool == "chat"
         assert result.confidence == 0.88
+
+    @pytest.mark.asyncio
+    async def test_topic_fast_path_routes_short_subject_to_news(self):
+        for text in ("игры", "Tesla", "ai", "биткоин", "игровые"):
+            result = await LLMIntentRouter.route(user_id=1, message_text=text)
+            assert result.intent == "news", f"{text!r} should route to news"
+            assert result.tool == "news"
+            assert result.args.query == text
+
+    @pytest.mark.asyncio
+    async def test_topic_fast_path_skips_llm_call(self):
+        with patch(
+            "bot.intent.router.generate_chat_completion",
+            return_value=_FakeAsyncIterator([]),
+        ) as mock_gen:
+            result = await LLMIntentRouter.route(user_id=1, message_text="игры")
+
+        assert result.intent == "news"
+        assert result.tool == "news"
+        assert not mock_gen.called
+
+    @pytest.mark.asyncio
+    async def test_topic_fast_path_yields_to_command_words(self):
+        """Explicit commands like 'покажи игры' should not be forced to news."""
+        with patch(
+            "bot.intent.router.generate_chat_completion",
+            return_value=_FakeAsyncIterator(
+                [(False, self._make_chunk('{"intent":"news","tool":"news","args":{"query":"игры"},"confidence":0.9}'))]
+            ),
+        ) as mock_gen:
+            result = await LLMIntentRouter.route(user_id=1, message_text="покажи игры")
+
+        # The LLM was consulted because a command word is present.
+        assert mock_gen.called
+        assert result.intent == "news"
+        assert result.tool == "news"

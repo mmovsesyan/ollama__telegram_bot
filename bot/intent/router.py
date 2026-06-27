@@ -144,6 +144,93 @@ class LLMIntentRouter:
                     return text[first_brace : i + 1].strip()
         return text
 
+    # Words that indicate an explicit command and should be handled by the
+    # regex fast-path below or the LLM, not by the topic-only short-cut.
+    _COMMAND_WORDS: frozenset[str] = frozenset({
+        "покажи", "дай", "скажи", "расскажи", "пришли", "отправь", "выведи",
+        "найди", "поищи", "загугли", "погугли", "ищи", "search",
+        "напомни", "напоминание", "напомнить", "remind",
+        "задача", "задачу", "задачи", "task",
+        "запомни", "факт", "memory",
+        "заметка", "note",
+        "сохрани", "добавь", "удали", "убери",
+        "план", "plan", "составь", "сделай", "поставь",
+        "следи", "мониторь", "monitor", "мониторинг",
+        "погода", "weather", "прогноз", "forecast", "температура",
+        "новости", "новость", "news",
+        "помощь", "help", "команды", "commands",
+        "отмена", "отмени", "cancel", "стоп", "stop",
+    })
+
+    # Common subject nouns that users type as one-word news queries.
+    # These bypass the LLM router and go straight to the news tool.
+    _GENERAL_TOPICS: frozenset[str] = frozenset({
+        "tesla", "тесла",
+        "apple", "эпл", "iphone", "айфон",
+        "nvidia", "энвидиа",
+        "bitcoin", "биткоин", "биток",
+        "ethereum", "эфир", "эфириум",
+        "crypto", "крипта", "криптовалюта",
+        "oil", "нефть",
+        "gold", "золото",
+        "silver", "серебро",
+        "uranium", "уран",
+        "gazprom", "газпром",
+        "sber", "сбер",
+        "yandex", "яндекс",
+        "meta",
+        "microsoft",
+        "amazon",
+        "netflix",
+        "openai",
+        "chatgpt",
+        "android",
+        "steam",
+        "epic",
+    })
+
+    @classmethod
+    def _topic_fast_path(cls, message_text: str) -> IntentResult | None:
+        """Route short topic-only messages straight to news.
+
+        Examples: "игры", "Tesla", "биткоин", "ai". These are common enough
+        that waiting for an LLM round-trip wastes 10-15 seconds for no gain.
+        Any explicit command word ("покажи", "поищи", "новости") lets the
+        regex fast-path or LLM handle the message normally.
+        """
+        text = message_text.strip()
+        cleaned = re.sub(r"[^\w\s-]", " ", text).strip()
+        if not cleaned:
+            return None
+        words = cleaned.split()
+        if len(words) > 3:
+            return None
+        lowered = [w.lower() for w in words]
+        if any(w in cls._COMMAND_WORDS for w in lowered):
+            return None
+
+        from bot.services.news_categories import (
+            CATEGORY_TOPICS,
+            _normalize_category,
+        )
+
+        normalized = _normalize_category(text)
+        if normalized in CATEGORY_TOPICS:
+            return IntentResult(
+                intent="news",
+                tool="news",
+                args=IntentArgs(query=text),
+                confidence=0.9,
+            )
+        if any(w in cls._GENERAL_TOPICS for w in lowered):
+            return IntentResult(
+                intent="news",
+                tool="news",
+                args=IntentArgs(query=text),
+                confidence=0.9,
+            )
+        return None
+
     @classmethod
     def _fallback(cls, message_text: str) -> IntentResult:
         """Heuristic intent detection used when the LLM is unreachable.
@@ -336,7 +423,14 @@ class LLMIntentRouter:
 
     @classmethod
     async def route(cls, user_id: int, message_text: str) -> IntentResult:
-        # Fast path: regex catches obvious commands ("напомни", "погода в Москве",
+        # 1. Topic-only fast path: one-word subjects like "игры", "Tesla",
+        #    "биткоин" are clearly news queries and should not pay for an
+        #    LLM routing round-trip.
+        topic_fast = cls._topic_fast_path(message_text)
+        if topic_fast is not None and topic_fast.confidence >= 0.9:
+            return topic_fast
+
+        # 2. Regex fast path: catches obvious commands ("напомни", "погода в Москве",
         # "поищи Tesla") in microseconds. Skip the LLM round-trip for these —
         # large models like kimi-k2.6 can take 10+ seconds and time out, leaving
         # the user staring at "confidence 0.0".
@@ -344,9 +438,9 @@ class LLMIntentRouter:
         if fast.confidence >= 0.9 and fast.tool != "chat":
             return fast
 
-        # Slow path: ambiguous text — let the LLM do the routing. If it fails
-        # or times out, _fallback runs again and either picks a tool from the
-        # regex hints or falls through to chat.
+        # 3. Slow path: genuinely ambiguous text — let the LLM do the routing. If
+        # it fails or times out, _fallback runs again and either picks a tool
+        # from the regex hints or falls through to chat.
         context = await ContextBuilder.build(user_id=user_id, message_text=message_text)
         messages = [
             OllamaChatMessage(role="system", content=cls._build_system_prompt(context)),
@@ -355,7 +449,7 @@ class LLMIntentRouter:
 
         raw_response = ""
         try:
-            async with asyncio.timeout(15):
+            async with asyncio.timeout(8):
                 async for is_done, chunk in generate_chat_completion(
                     messages, OLLAMA_MODEL, temperature=0
                 ):
@@ -366,7 +460,7 @@ class LLMIntentRouter:
                         return cls._fallback(message_text)
                     raw_response += getattr(chunk.message, "content", "") or ""
         except asyncio.TimeoutError:
-            logger.warning("Intent routing timed out after 15s")
+            logger.warning("Intent routing timed out after 8s")
             return cls._fallback(message_text)
         except Exception as e:
             logger.warning(f"Intent routing generation failed: {e}")
