@@ -17,7 +17,7 @@ from bot.keyboards.reply import command_keyboard, cancel_keyboard
 from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
 from bot.ollama.api import get_installed_models, model_is_installed
 from bot.ollama.dto import OllamaErrorChunk
-from bot.routers.common import _typing_until
+from bot.routers.common import _typing_until, _typing_while_iterating
 from bot.security import is_allowed as _is_allowed
 from bot.settings import (
     CLOUD_MODELS,
@@ -191,7 +191,7 @@ async def generate(message: Message, user_id: int, text: str):
     assistant_content = ""
     try:
         async with asyncio.timeout(300):
-            async for is_done, chunk in _typing_until(
+            async for is_done, chunk in _typing_while_iterating(
                 user_id,
                 generate_chat_completion(
                     chat.ollama_chat.messages,

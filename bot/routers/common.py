@@ -6,7 +6,7 @@ import logging
 import re
 import socket
 from datetime import datetime
-from typing import Awaitable, TypeVar
+from typing import AsyncIterator, Awaitable, TypeVar
 from urllib.parse import urlparse
 
 import aiohttp
@@ -512,6 +512,33 @@ async def _typing_until(user_id: int, task: Awaitable[T], interval: float = 4.0)
     worker = asyncio.create_task(_loop())
     try:
         return await task
+    finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+
+
+async def _typing_while_iterating(
+    user_id: int,
+    stream: AsyncIterator[T],
+    interval: float = 4.0,
+) -> AsyncIterator[T]:
+    """Keep Telegram typing action alive while iterating over `stream`."""
+
+    async def _loop() -> None:
+        while True:
+            try:
+                await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
+
+    worker = asyncio.create_task(_loop())
+    try:
+        async for item in stream:
+            yield item
     finally:
         worker.cancel()
         try:
