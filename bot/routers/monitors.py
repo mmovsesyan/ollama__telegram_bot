@@ -21,6 +21,7 @@ from bot.routers.common import (
     _is_safe_monitor_url_async,
     _normalize_url,
     _parse_interval,
+    _typing_until,
 )
 
 router = Router()
@@ -180,9 +181,12 @@ async def _process_monitor_add(
         )
         return
 
-    safe, reason = await _is_safe_monitor_url_async(url)
+    status_text = "⏳ Проверяю..."
+    status_msg = await message.answer(status_text)
+
+    safe, reason = await _typing_until(user_id, _is_safe_monitor_url_async(url))
     if not safe:
-        await message.answer(
+        await status_msg.edit_text(
             f"⚠️ URL не разрешён: {reason}",
             reply_markup=command_keyboard,
         )
@@ -192,22 +196,20 @@ async def _process_monitor_add(
     # regardless of how the caller parsed the interval.
     interval = max(60, int(interval))
 
-    status_text = "⏳ Проверяю..."
-    status_msg = await message.answer(status_text)
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                status = resp.status
-                if status == expected_status:
-                    status_text = f"✅ HTTP {status} — сайт доступен"
-                else:
-                    status_text = f"⚠️ HTTP {status} (ожидался {expected_status})"
-    except Exception as e:
-        status_text = (
-            f"⚠️ Ошибка: {str(e)[:100]}\nМонитор добавлен, но URL может быть недоступен."
-        )
+    async def _probe() -> str:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    status = resp.status
+                    if status == expected_status:
+                        return f"✅ HTTP {status} — сайт доступен"
+                    return f"⚠️ HTTP {status} (ожидался {expected_status})"
+        except Exception as e:
+            return f"⚠️ Ошибка: {str(e)[:100]}\nМонитор добавлен, но URL может быть недоступен."
+
+    status_text = await _typing_until(user_id, _probe())
 
     mid = db.add_monitor(
         user_id=user_id,

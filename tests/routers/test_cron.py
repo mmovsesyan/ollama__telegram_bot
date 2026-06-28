@@ -136,17 +136,47 @@ def test_is_safe_monitor_url_accepts_public_and_blocks_internal():
 @pytest.mark.asyncio
 async def test_process_monitor_add_rejects_localhost(fresh_db):
     msg = _message(text="/monitor_add Test http://localhost")
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    msg.answer = AsyncMock(return_value=status_msg)
+
     await cron_module._process_monitor_add(msg, 42, "Test", "http://localhost", 300)
 
     assert fresh_db.get_monitors(42) == []
-    msg.answer.assert_awaited()
-    text = msg.answer.await_args.args[0]
+    status_msg.edit_text.assert_awaited()
+    text = status_msg.edit_text.await_args.args[0]
     assert "URL не разрешён" in text
+
+
+@pytest.mark.asyncio
+async def test_process_monitor_add_async_dns_rejects_private_resolution(fresh_db):
+    msg = _message(text="/monitor_add Test http://rebind.example")
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    msg.answer = AsyncMock(return_value=status_msg)
+
+    with patch.object(
+        monitors_module,
+        "_is_safe_monitor_url_async",
+        new=AsyncMock(return_value=(False, "хост разрешается в запрещённый IP")),
+    ):
+        await cron_module._process_monitor_add(
+            msg, 42, "Test", "http://rebind.example", 300
+        )
+
+    assert fresh_db.get_monitors(42) == []
+    status_msg.edit_text.assert_awaited()
+    text = status_msg.edit_text.await_args.args[0]
+    assert "URL не разрешён" in text
+    assert "запрещённый IP" in text
 
 
 @pytest.mark.asyncio
 async def test_process_monitor_add_accepts_public_url(fresh_db):
     msg = _message(text="/monitor_add Test http://example.com")
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    msg.answer = AsyncMock(return_value=status_msg)
 
     mock_response = AsyncMock()
     mock_response.status = 200
@@ -171,27 +201,7 @@ async def test_process_monitor_add_accepts_public_url(fresh_db):
     monitors = fresh_db.get_monitors(42)
     assert len(monitors) == 1
     assert monitors[0]["url"] == "http://example.com"
-    msg.answer.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_process_monitor_add_async_dns_rejects_private_resolution(fresh_db):
-    msg = _message(text="/monitor_add Test http://rebind.example")
-
-    with patch.object(
-        monitors_module,
-        "_is_safe_monitor_url_async",
-        new=AsyncMock(return_value=(False, "хост разрешается в запрещённый IP")),
-    ):
-        await cron_module._process_monitor_add(
-            msg, 42, "Test", "http://rebind.example", 300
-        )
-
-    assert fresh_db.get_monitors(42) == []
-    msg.answer.assert_awaited()
-    text = msg.answer.await_args.args[0]
-    assert "URL не разрешён" in text
-    assert "запрещённый IP" in text
+    status_msg.edit_text.assert_awaited()
 
 
 @pytest.mark.asyncio

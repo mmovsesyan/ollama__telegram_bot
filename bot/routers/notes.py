@@ -10,6 +10,7 @@ from bot.states import BotStates
 from bot.routers.common import (
     _fsm_guard,
     _refresh_completion_system_prompt,
+    _typing_until,
 )
 
 router = Router()
@@ -17,6 +18,13 @@ logger = logging.getLogger(__name__)
 
 # Injected from bot/__init__.py at startup.
 db = None
+
+
+async def _save_note(user_id: int, content: str) -> None:
+    """Persist a note and refresh the system prompt. Wrapped as a coroutine
+    so _typing_until can keep the typing indicator alive."""
+    db.add_note(user_id, content)
+    _refresh_completion_system_prompt(user_id)
 
 
 @router.message(lambda m: m.text and m.text.startswith("/note"))
@@ -45,9 +53,11 @@ async def cmd_note(message: Message, state: FSMContext):
             await state.set_state(BotStates.waiting_note)
         return
 
-    db.add_note(message.from_user.id, parts[1])
-    _refresh_completion_system_prompt(message.from_user.id)
-    await message.answer(
+    status_msg = await message.answer("📝 Сохраняю заметку...")
+    await _typing_until(
+        message.from_user.id, _save_note(message.from_user.id, parts[1])
+    )
+    await status_msg.edit_text(
         f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {parts[1]}",
         reply_markup=command_keyboard,
     )
@@ -83,9 +93,11 @@ async def process_note(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         await state.clear()
         return
-    db.add_note(message.from_user.id, message.text)
-    _refresh_completion_system_prompt(message.from_user.id)
-    await message.answer(
+    status_msg = await message.answer("📝 Сохраняю заметку...")
+    await _typing_until(
+        message.from_user.id, _save_note(message.from_user.id, message.text)
+    )
+    await status_msg.edit_text(
         f"✅ Заметка сохранена. AI будет помнить это.\n\n📝 {message.text}",
         reply_markup=command_keyboard,
     )

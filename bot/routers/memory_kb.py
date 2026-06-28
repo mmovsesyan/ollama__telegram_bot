@@ -82,6 +82,7 @@ async def cmd_memory_add(message: Message, state: FSMContext):
         if category not in ("fact", "preference", "note"):
             category = "fact"
 
+    status_msg = await message.answer("🧠 Сохраняю...")
     mid = db.add_memory(message.from_user.id, category, content)
     _refresh_completion_system_prompt(message.from_user.id)
     cat_names = {
@@ -89,7 +90,7 @@ async def cmd_memory_add(message: Message, state: FSMContext):
         "preference": "❤️ Предпочтение",
         "note": "📝 Заметка",
     }
-    await message.answer(
+    await status_msg.edit_text(
         f"✅ Сохранено: {cat_names.get(category, category)}\n" f"#{mid} | {content}",
         reply_markup=command_keyboard,
     )
@@ -151,9 +152,10 @@ async def process_memory_add(message: Message, state: FSMContext):
     if category not in ("fact", "preference", "note"):
         category = "note"
 
+    status_msg = await message.answer("🧠 Сохраняю...")
     mid = db.add_memory(message.from_user.id, category, content)
     _refresh_completion_system_prompt(message.from_user.id)
-    await message.answer(
+    await status_msg.edit_text(
         f"✅ Сохранено: {cat_names.get(category, category)}\n" f"#{mid} | {content}",
         reply_markup=command_keyboard,
     )
@@ -188,8 +190,12 @@ async def cmd_cleanup(message: Message, state: FSMContext):
         return
     from bot.services import retention as retention_service
 
-    docs, images = retention_service.cleanup_user_retention(message.from_user.id)
-    await message.answer(
+    status_msg = await message.answer("🗑 Очищаю старые файлы...")
+    docs, images = await _typing_until(
+        message.from_user.id,
+        retention_service.cleanup_user_retention(message.from_user.id),
+    )
+    await status_msg.edit_text(
         f"🗑 Очистка завершена:\n"
         f"Документов удалено: {docs}\n"
         f"Фото удалено: {images}",

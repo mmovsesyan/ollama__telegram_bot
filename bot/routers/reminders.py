@@ -53,6 +53,7 @@ async def cmd_remind(message: Message, state: FSMContext):
         await state.set_state(BotStates.waiting_remind)
         return
 
+    await message.answer("⏰ Добавляю напоминание...")
     await reminders_service._process_remind(message.from_user.id, parts[1])
 
 

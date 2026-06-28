@@ -14,6 +14,7 @@ from aiogram.types import (
     Message,
 )
 
+from bot import bot as aiogram_bot
 from bot.db import Database
 from bot.keyboards.reply import command_keyboard
 from bot.security import is_allowed
@@ -137,11 +138,17 @@ async def cmd_settings(message: Message, state: FSMContext):
         return
     if not is_allowed(message.from_user.id):
         return
+    user_id = message.from_user.id
     if db is None:
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
 
-    prefs = _user_prefs(message.from_user.id)
+    try:
+        await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+    except Exception:
+        pass
+
+    prefs = _user_prefs(user_id)
     await message.answer(_settings_text(prefs), reply_markup=_settings_keyboard(prefs))
 
 

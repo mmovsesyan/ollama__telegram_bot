@@ -684,14 +684,16 @@ async def cmd_model(message: Message, state: FSMContext):
             parse_mode="Markdown",
         )
         return
-    if not await model_is_installed(model_to_set):
-        await message.answer(
+    status_msg = await message.answer("🤖 Проверяю модель...")
+    installed = await _typing_until(user_id, model_is_installed(model_to_set))
+    if not installed:
+        await status_msg.edit_text(
             f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
         )
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(
+    await status_msg.edit_text(
         f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard
     )
 
@@ -729,15 +731,17 @@ async def process_model_state(message: Message, state: FSMContext):
         )
         await state.clear()
         return
-    if not await model_is_installed(model_to_set):
-        await message.answer(
+    status_msg = await message.answer("🤖 Проверяю модель...")
+    installed = await _typing_until(user_id, model_is_installed(model_to_set))
+    if not installed:
+        await status_msg.edit_text(
             f"Модель {model_to_set} не найдена!", reply_markup=command_keyboard
         )
         await state.clear()
         return
     _create_chat(user_id)
     chats[user_id].selected_model = model_to_set
-    await message.answer(
+    await status_msg.edit_text(
         f"✅ Модель изменена на {model_to_set}", reply_markup=command_keyboard
     )
     await state.clear()

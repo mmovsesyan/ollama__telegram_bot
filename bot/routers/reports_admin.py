@@ -5,6 +5,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.bot import bot as aiogram_bot
 from bot.keyboards.reply import command_keyboard
 from bot.security import is_admin, is_allowed as _is_allowed
 from bot.routers.common import _BUTTON_HANDLERS
@@ -32,20 +33,26 @@ async def cmd_report(message: Message, state: FSMContext):
         await message.answer("База данных недоступна.", reply_markup=command_keyboard)
         return
 
+    user_id = message.from_user.id
+    try:
+        await aiogram_bot.send_chat_action(chat_id=user_id, action="typing")
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc)
     text = f"📊 Ежедневный отчёт ({now.strftime('%Y-%m-%d %H:%M')})\n\n"
 
-    reminders = db.get_user_reminders(message.from_user.id)
+    reminders = db.get_user_reminders(user_id)
     text += f"⏰ Напоминаний / задач: {len(reminders)}\n"
 
-    monitors = db.get_monitors(message.from_user.id)
+    monitors = db.get_monitors(user_id)
     text += f"🔍 Мониторов: {len(monitors)}\n"
 
-    notes = db.get_notes(message.from_user.id)
+    notes = db.get_notes(user_id)
     if notes:
         text += f"\n📝 Заметки:\n{notes}"
 
-    memories = db.get_memories(message.from_user.id)
+    memories = db.get_memories(user_id)
     if memories:
         text += f"\n🧠 Память: {len(memories)} фактов"
 
