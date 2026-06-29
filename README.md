@@ -156,7 +156,7 @@ Then just write or speak:
 
 > 💡 Voice messages are transcribed via Whisper and routed through the same pipeline as text.
 
-> ⚡ Obvious commands (remind, weather, search) are matched instantly via regex, no LLM. Complex queries go through the LLM router with a 15-second timeout.
+> ⚡ Obvious commands (remind, weather, search) are matched instantly via regex, no LLM. Complex queries go through the LLM router with an 8-second timeout and fall back to a heuristic regex router if the LLM is unreachable.
 
 ### Bot commands
 
@@ -180,6 +180,13 @@ Then just write or speak:
 | `/model <name>` | Switch model |
 | `/clear` | Clear chat history |
 | `/report` | Daily report |
+| `/briefing` | Morning briefing now |
+| `/digest` | Evening digest now |
+| `/settings` | Bot settings (timezone, voice, news) |
+| `/docs` | List uploaded documents |
+| `/forget_doc <id>` | Delete a document |
+| `/images` | List uploaded photos |
+| `/forget_image <id>` | Delete a photo |
 
 ### Admin commands
 
@@ -229,6 +236,7 @@ WHISPER_COMPUTE_TYPE=default # int8, float16, default
 - `ALLOWED_CHAT_IDS` bootstraps the initial admin(s) and approved users on first DB creation. After that the SQLite `users` table is the source of truth; use admin commands to manage access.
 - New users start with `pending` status and require admin approval before any bot features work.
 - Admin commands are checked against the `is_admin` flag in the DB.
+- Site-monitor URL validation blocks localhost, private/reserved IPs and non-http(s) schemes to reduce SSRF risk.
 - Never commit real tokens or keys.
 
 ---
@@ -375,7 +383,7 @@ cd ollama__telegram_bot
 
 > 💡 Голосовое сообщение распознаётся через Whisper и идёт по тому же маршруту что и текст.
 
-> ⚡ Очевидные команды (напомни, погода, поищи) обрабатываются мгновенно через regex, без LLM. Сложные — идут в LLM-роутер с таймаутом 15 сек.
+> ⚡ Очевидные команды (напомни, погода, поищи) обрабатываются мгновенно через regex, без LLM. Сложные — идут в LLM-роутер с таймаутом 8 сек; при недоступности LLM срабатывает эвристический regex fallback.
 
 ### Команды бота
 
@@ -399,6 +407,13 @@ cd ollama__telegram_bot
 | `/model <name>` | Сменить модель |
 | `/clear` | Очистить историю чата |
 | `/report` | Ежедневный отчёт |
+| `/briefing` | Утренний брифинг сейчас |
+| `/digest` | Вечерний дайджест сейчас |
+| `/settings` | Настройки бота (таймзона, голос, новости) |
+| `/docs` | Список загруженных документов |
+| `/forget_doc <id>` | Удалить документ |
+| `/images` | Список загруженных фото |
+| `/forget_image <id>` | Удалить фото |
 
 ---
 
@@ -440,10 +455,19 @@ main.py
 ├── bot/states.py               # FSM-состояния
 ├── bot/routers/
 │   ├── start.py                # /start + онбординг (имя, таймзона)
-│   ├── completion.py           # AI-чат, файлы, голос, generate()
-│   └── cron.py                 # Напоминания, задачи, мониторы, погода, поиск,
-│                                 новости, база знаний, FSM-обработчики кнопок
+│   ├── completion.py           # AI-чат, файлы, фото, generate()
+│   ├── reminders.py            # /remind, /reminders, edit/delete reminders
+│   ├── tasks.py                # /task + AI-задачи
+│   ├── notes.py                # /note
+│   ├── monitors.py             # /monitor_add, /monitors
+│   ├── memory_kb.py            # /memory, /memory_add, /kb
+│   ├── news_weather.py         # /weather, /news, /search, /fetch
+│   ├── reports_admin.py        # /report, /admin_*, /docs, /images
+│   ├── settings.py             # /settings
+│   ├── admin_control.py        # Telegram process-control commands
+│   └── cron.py                 # Compatibility shim; реэкспортирует доменные роутеры
 ├── bot/handlers/smart.py       # Free-form roтер: regex fast-path → LLM → tool
+├── bot/handlers/voice.py       # Голосовые сообщения + голосовые ответы (piper-tts)
 ├── bot/intent/                 # LLM-driven intent dispatch
 │   ├── router.py               # LLMIntentRouter с regex fallback
 │   ├── executor.py             # Validation + dispatch + clarification
@@ -455,8 +479,16 @@ main.py
 ├── bot/services/
 │   ├── reminders.py            # Парсинг времени с поддержкой таймзон
 │   ├── weather.py              # wttr.in + Open-Meteo
+│   ├── rss_news.py             # RSS-агрегатор новостей
+│   ├── briefing.py             # Утренний брифинг
+│   ├── digest.py               # Вечерний дайджест
 │   ├── kb.py                   # KB-first поиск с web fallback
 │   ├── kb_extract.py           # Auto-extract фактов + LLM-сжатие
+│   ├── documents.py            # Загрузка документов + Q&A по документу
+│   ├── images.py               # Vision-описание фото + OCR + Q&A по фото
+│   ├── reminder_suggest.py     # AI-предложение напомнить после N сообщений
+│   ├── reminder_completion.py  # Предложение закрыть напоминание
+│   ├── retention.py            # Очистка старых файлов
 │   └── profile.py              # Таймзоны, локализация, IANA mapping
 ├── bot/ollama/api.py           # Ollama API client + OpenAI fallback
 ├── bot/tasks_exec.py           # «Умное» выполнение задач (погода и др.)
@@ -470,7 +502,10 @@ main.py
 
 - `.env`, логи и база данных исключены из git (`.gitignore`).
 - История git была очищена от секретов.
-- `ALLOWED_CHAT_IDS` ограничивает доступ к боту.
+- `ALLOWED_CHAT_IDS` задаёт начальных администраторов и одобренных пользователей при первом создании БД. Далее источником правды служит таблица `users`; управляйте доступом через `/admin_*` команды.
+- Новые пользователи получают статус `pending` и требуют одобрения администратора.
+- Админ-команды проверяются по флагу `is_admin` в БД.
+- Проверка URL мониторинга блокирует `localhost`, частные/зарезервированные IP и схемы не http/https, снижая риск SSRF.
 - Никогда не коммитьте реальные токены и ключи.
 
 ---
