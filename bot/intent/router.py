@@ -37,13 +37,17 @@ _SCHEMA = {
                 "name": {"type": ["string", "null"]},
                 "interval": {"type": ["integer", "null"]},
                 "plan_text": {"type": ["string", "null"]},
+                "days": {"type": ["integer", "null"]},
             },
             "additionalProperties": False,
         },
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "clarification_needed": {"type": "boolean"},
         "clarification_question": {"type": ["string", "null"]},
-        "proactive_suggestion": {"type": ["object", "null"], "additionalProperties": True},
+        "proactive_suggestion": {
+            "type": ["object", "null"],
+            "additionalProperties": True,
+        },
         "response_tone": {"type": "string", "enum": ["friendly", "neutral", "concise"]},
     },
     "required": ["intent", "tool", "args", "confidence"],
@@ -146,48 +150,113 @@ class LLMIntentRouter:
 
     # Words that indicate an explicit command and should be handled by the
     # regex fast-path below or the LLM, not by the topic-only short-cut.
-    _COMMAND_WORDS: frozenset[str] = frozenset({
-        "покажи", "дай", "скажи", "расскажи", "пришли", "отправь", "выведи",
-        "найди", "поищи", "загугли", "погугли", "ищи", "search",
-        "напомни", "напоминание", "напомнить", "remind",
-        "задача", "задачу", "задачи", "task",
-        "запомни", "факт", "memory",
-        "заметка", "note",
-        "сохрани", "добавь", "удали", "убери",
-        "план", "plan", "составь", "сделай", "поставь",
-        "следи", "мониторь", "monitor", "мониторинг",
-        "погода", "weather", "прогноз", "forecast", "температура",
-        "новости", "новость", "news",
-        "помощь", "help", "команды", "commands",
-        "отмена", "отмени", "cancel", "стоп", "stop",
-    })
+    _COMMAND_WORDS: frozenset[str] = frozenset(
+        {
+            "покажи",
+            "дай",
+            "скажи",
+            "расскажи",
+            "пришли",
+            "отправь",
+            "выведи",
+            "найди",
+            "поищи",
+            "загугли",
+            "погугли",
+            "ищи",
+            "search",
+            "напомни",
+            "напоминание",
+            "напомнить",
+            "remind",
+            "задача",
+            "задачу",
+            "задачи",
+            "task",
+            "запомни",
+            "факт",
+            "memory",
+            "заметка",
+            "note",
+            "сохрани",
+            "добавь",
+            "удали",
+            "убери",
+            "план",
+            "plan",
+            "составь",
+            "сделай",
+            "поставь",
+            "следи",
+            "мониторь",
+            "monitor",
+            "мониторинг",
+            "погода",
+            "weather",
+            "прогноз",
+            "forecast",
+            "температура",
+            "новости",
+            "новость",
+            "news",
+            "помощь",
+            "help",
+            "команды",
+            "commands",
+            "отмена",
+            "отмени",
+            "cancel",
+            "стоп",
+            "stop",
+        }
+    )
 
     # Common subject nouns that users type as one-word news queries.
     # These bypass the LLM router and go straight to the news tool.
-    _GENERAL_TOPICS: frozenset[str] = frozenset({
-        "tesla", "тесла",
-        "apple", "эпл", "iphone", "айфон",
-        "nvidia", "энвидиа",
-        "bitcoin", "биткоин", "биток",
-        "ethereum", "эфир", "эфириум",
-        "crypto", "крипта", "криптовалюта",
-        "oil", "нефть",
-        "gold", "золото",
-        "silver", "серебро",
-        "uranium", "уран",
-        "gazprom", "газпром",
-        "sber", "сбер",
-        "yandex", "яндекс",
-        "meta",
-        "microsoft",
-        "amazon",
-        "netflix",
-        "openai",
-        "chatgpt",
-        "android",
-        "steam",
-        "epic",
-    })
+    _GENERAL_TOPICS: frozenset[str] = frozenset(
+        {
+            "tesla",
+            "тесла",
+            "apple",
+            "эпл",
+            "iphone",
+            "айфон",
+            "nvidia",
+            "энвидиа",
+            "bitcoin",
+            "биткоин",
+            "биток",
+            "ethereum",
+            "эфир",
+            "эфириум",
+            "crypto",
+            "крипта",
+            "криптовалюта",
+            "oil",
+            "нефть",
+            "gold",
+            "золото",
+            "silver",
+            "серебро",
+            "uranium",
+            "уран",
+            "gazprom",
+            "газпром",
+            "sber",
+            "сбер",
+            "yandex",
+            "яндекс",
+            "meta",
+            "microsoft",
+            "amazon",
+            "netflix",
+            "openai",
+            "chatgpt",
+            "android",
+            "steam",
+            "epic",
+        }
+    )
 
     @classmethod
     def _topic_fast_path(cls, message_text: str) -> IntentResult | None:
@@ -278,7 +347,9 @@ class LLMIntentRouter:
         # 2. Monitor — uses a stem match ("мониторинг", "мониторить") and
         #    catches URLs. Comes before search so "мониторинг google.com"
         #    isn't intercepted by the "google" search keyword.
-        if re.search(r"\b(монитор\w*|следи\s+за|monitor\w*)\b", t) or re.search(r"https?://\S+", t):
+        if re.search(r"\b(монитор\w*|следи\s+за|monitor\w*)\b", t) or re.search(
+            r"https?://\S+", t
+        ):
             return IntentResult(
                 intent="add_monitor",
                 tool="monitor",
@@ -288,7 +359,10 @@ class LLMIntentRouter:
 
         # 3. Explicit reminder/task keyword wins over implicit schedule.
         #    "напомни о встрече завтра в 15:00" → reminder, not task.
-        if re.search(r"\b(поставь\s+задачу|задач[ау]|добавь\s+задачу|создай\s+задачу|запланируй\s+задачу|task)\b", t):
+        if re.search(
+            r"\b(поставь\s+задачу|задач[ау]|добавь\s+задачу|создай\s+задачу|запланируй\s+задачу|task)\b",
+            t,
+        ):
             return IntentResult(
                 intent="create_task",
                 tool="task",
@@ -331,10 +405,11 @@ class LLMIntentRouter:
                 confidence=0.85,
             )
 
-        # 6. Weather — extract city after "в"/"in"/"для". Strip time
+        # 6. Weather — extract city with the shared helper. Strip time
         # phrases first so 'погода на неделю в москве' doesn't latch
         # onto 'на' as the city.
-        from bot.intent.tools.weather import _detect_days
+        from bot.intent.tools.weather import _detect_days, extract_city
+
         days = _detect_days(message_text)
         weather_text = re.sub(
             r"на\s+(?:неделю|месяц|выходные|завтра|послезавтра|ближайш\w+|\d+\s*(?:день|дня|дней|сутки|суток))|"
@@ -345,30 +420,16 @@ class LLMIntentRouter:
             t,
             flags=re.IGNORECASE,
         )
-        # First, drop a leading 'погод(ы|у|а|...)' / 'прогноз(а)?' chain
-        # so the city extractor isn't tempted to grab 'погоды' as a city.
-        weather_text = re.sub(
+        if re.search(
             r"\b(?:прогноз\w*\s+)?(?:погод\w*|weather|температур\w*|прогноз\w*|forecast)\b",
-            "WX",
             weather_text,
-            count=1,
-            flags=re.IGNORECASE,
-        )
-        m = re.search(
-            r"WX\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?",
-            weather_text,
-        )
-        if m:
-            city = (m.group(1) or "").strip()
-            if city.lower() in {"на", "по", "для", "в", "с", "за", "и", "the", "a", "in", "for"}:
-                city = ""
+            re.IGNORECASE,
+        ):
+            city = extract_city(weather_text)
             return IntentResult(
                 intent="weather",
                 tool="weather",
-                args=IntentArgs(
-                    city=city.capitalize() if city else None,
-                    days=days,
-                ),
+                args=IntentArgs(city=city, days=days),
                 confidence=0.9 if city else 0.5,
             )
 
@@ -385,7 +446,9 @@ class LLMIntentRouter:
 
         # 8. Search — but skip if "google" appears only inside a URL we already
         #    handled above. After monitor priority, this is safe.
-        m = re.search(r"\b(?:поищи|найди|загугли|погугли|ищи|search|google)\b\s*(.*)", t)
+        m = re.search(
+            r"\b(?:поищи|найди|загугли|погугли|ищи|search|google)\b\s*(.*)", t
+        )
         if m:
             query = m.group(1).strip() or message_text
             return IntentResult(

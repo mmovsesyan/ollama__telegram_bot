@@ -62,7 +62,11 @@ db = None  # injected in __init__
 
 
 def _escape_markdown(text: str) -> str:
-    chars = r"_[]()~`>#+-=|{}.!"
+    # Telegram MarkdownV2 reserved characters:
+    # _ * [ ] ( ) ~ ` > # + - = | { } . !
+    chars = r"_*[]()~`>#+-=|{}.!"
+    # Escape backslashes first so we don't double-escape our own escapes.
+    text = text.replace("\\", "\\\\")
     for ch in chars:
         text = text.replace(ch, "\\" + ch)
     return text
@@ -225,12 +229,9 @@ async def generate(message: Message, user_id: int, text: str):
                                 else answer_keyboard,
                             )
 
-                        for extra_text in wrapped_response:
+                        for idx, extra_text in enumerate(wrapped_response):
                             extra_msg = await msg.answer(extra_text)
-                            if (
-                                wrapped_response.index(extra_text)
-                                == len(wrapped_response) - 1
-                            ):
+                            if idx == len(wrapped_response) - 1:
                                 await extra_msg.edit_reply_markup(
                                     reply_markup=answer_keyboard
                                 )

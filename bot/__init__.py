@@ -114,6 +114,7 @@ async def main() -> None:
     from bot.services import reminder_suggest as reminder_suggest_service
     from bot.services import reminder_completion as reminder_completion_service
     from bot.services import images as images_service
+    from bot.services import documents as documents_service
     from bot.services import digest as digest_service
     from bot.services import retention as retention_service
 
@@ -127,6 +128,7 @@ async def main() -> None:
     reminder_suggest_service.reminders_service = reminders_service
     reminder_completion_service.db = db
     images_service.db = db
+    documents_service.db = db
     digest_service.db = db
     retention_service.db = db
 

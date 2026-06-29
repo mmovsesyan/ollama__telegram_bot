@@ -64,6 +64,7 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     reply_to = message.reply_to_message
     if reply_to and reply_to.message_id:
         from bot.services import images as images_service
+
         image_id = images_service.image_id_for_message(reply_to.message_id)
         if image_id is not None:
             status_msg = await message.answer("👀 Смотрю на фото...")
@@ -74,12 +75,14 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
                 await status_msg.edit_text(answer, reply_markup=command_keyboard)
             else:
                 await status_msg.edit_text(
-                    "⚠️ Не удалось получить ответ по фото.", reply_markup=command_keyboard
+                    "⚠️ Не удалось получить ответ по фото.",
+                    reply_markup=command_keyboard,
                 )
             return
 
     # Smart reminder completion: "сделал/готово/выполнил ... напоминание".
     from bot.services import reminder_completion as reminder_completion_service
+
     completion_offer = reminder_completion_service.maybe_offer_completion(user_id, text)
     if completion_offer is not None:
         offer_text, offer_keyboard = completion_offer
@@ -115,23 +118,50 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
         )
         return
 
+    # ChatTool streams through completion.generate(), which already saves
+    # user/assistant messages to the DB. Avoid duplicate rows here.
+    is_chat_path = intent_result.tool == "chat"
+
     # Tools that send their own Telegram messages return an empty text
     # (e.g. RemindTool, TaskTool — _process_remind/_process_task_from_text
     # already replied via aiogram_bot.send_message).
     if not result.text and result.success:
-        # For non-chat tools we still save the exchange and try to extract facts
-        # from any assistant reply that is already in the chat context.
-        _persist_exchange(user_id, text, "", save_messages=True)
+        if is_chat_path:
+            # Persist facts from the streamed reply, but don't duplicate DB rows.
+            _persist_exchange(user_id, text, None, save_messages=False)
+            # Voice output is configured per-user; the streamed text reply is
+            # already on screen, but read it aloud if requested.
+            from bot.services.voice import voice_output_enabled as _voice_output_enabled
+
+            if _voice_output_enabled(user_id):
+                from bot.services.voice import send_voice_reply
+                from bot.routers import completion
+
+                chat = completion.chats.get(user_id)
+                assistant_text = ""
+                if chat:
+                    for m in reversed(chat.ollama_chat.messages):
+                        if m.role == "assistant":
+                            assistant_text = m.content
+                            break
+                if assistant_text:
+                    await send_voice_reply(message, assistant_text, bot=message.bot)
+            return
+
+        # Non-chat tools that already replied: store the user turn so context
+        # stays continuous, but do not write an empty assistant message.
+        _persist_exchange(user_id, text, None, save_messages=True)
         return
 
-    # ChatTool streams through completion.generate(), which already saves
-    # user/assistant messages to the DB. Avoid duplicate rows here.
-    is_chat_path = intent_result.tool == "chat"
-    markup = result.reply_markup if result.reply_markup is not None else command_keyboard
+    markup = (
+        result.reply_markup if result.reply_markup is not None else command_keyboard
+    )
 
     from bot.services.voice import voice_output_enabled as _voice_output_enabled
+
     if _voice_output_enabled(user_id) and is_chat_path:
         from bot.services.voice import send_voice_reply
+
         await send_voice_reply(message, result.text, bot=message.bot)
     else:
         await message.answer(result.text, reply_markup=markup)
@@ -140,9 +170,11 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
     # Background smart-reminder suggestion after enough chat turns.
     try:
         from bot.services import reminder_suggest as reminder_suggest_service
+
         reminder_suggest_service.record_interaction(user_id)
         if reminder_suggest_service.should_analyze(user_id):
             import asyncio as _asyncio
+
             _asyncio.create_task(
                 reminder_suggest_service.analyze_and_suggest(
                     user_id,
@@ -156,7 +188,7 @@ async def smart_message_handler(message: Message, state: FSMContext | None = Non
 def _persist_exchange(
     user_id: int,
     user_text: str,
-    assistant_text: str,
+    assistant_text: str | None = None,
     *,
     save_messages: bool = True,
 ) -> None:
@@ -173,17 +205,26 @@ def _persist_exchange(
         return
     try:
         from bot.routers import completion
+
         completion._create_chat(user_id)
         chat = completion.chats.get(user_id)
         if chat and chat.session_id:
             if save_messages:
-                db.save_message(user_id, chat.session_id, "user", user_text, chat.selected_model)
+                db.save_message(
+                    user_id, chat.session_id, "user", user_text, chat.selected_model
+                )
                 if assistant_text:
-                    db.save_message(user_id, chat.session_id, "assistant", assistant_text, chat.selected_model)
+                    db.save_message(
+                        user_id,
+                        chat.session_id,
+                        "assistant",
+                        assistant_text,
+                        chat.selected_model,
+                    )
 
         # Use the actual streamed assistant reply when the caller passed an
         # empty placeholder (ChatTool returns empty text after streaming).
-        effective_assistant = assistant_text
+        effective_assistant = assistant_text or ""
         if not effective_assistant and chat and chat.ollama_chat.messages:
             for m in reversed(chat.ollama_chat.messages):
                 if m.role == "assistant":
@@ -195,6 +236,7 @@ def _persist_exchange(
         if effective_assistant:
             import asyncio as _asyncio
             from bot.services.kb_extract import extract_facts_from_exchange
+
             _asyncio.create_task(
                 extract_facts_from_exchange(db, user_id, user_text, effective_assistant)
             )
@@ -203,5 +245,6 @@ def _persist_exchange(
         # are picked up immediately.
         completion.refresh_system_prompt(user_id)
     except Exception:
-        logger.exception("Failed to persist smart-pipeline exchange for user_id=%s", user_id)
-
+        logger.exception(
+            "Failed to persist smart-pipeline exchange for user_id=%s", user_id
+        )
