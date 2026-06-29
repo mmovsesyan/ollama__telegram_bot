@@ -7,7 +7,7 @@ for the scheduler's reminder execution path.
 """
 
 from bot.intent.schemas import IntentArgs, IntentResult, ToolContext
-from bot.intent.tools.weather import WeatherTool
+from bot.intent.tools.weather import WeatherTool, extract_city
 
 
 async def execute_smart(content: str) -> str | None:
@@ -23,16 +23,20 @@ async def execute_smart(content: str) -> str | None:
     lowered = text.lower()
     weather_indicators = {"погода", "weather", "температура", "прогноз погоды"}
     if any(w in lowered for w in weather_indicators):
+        city = extract_city(text)
+        if not city:
+            return "🌤 Какой город?"
         # Reuse the intent tool so behavior stays in one place.
         tool = WeatherTool()
+        args = IntentArgs(city=city, query=text)
         context = ToolContext(
             user_id=0,
             message_text=text,
-            args=IntentArgs(query=text),
+            args=args,
             intent_result=IntentResult(
                 intent="weather",
                 tool="weather",
-                args=IntentArgs(query=text),
+                args=args,
                 confidence=1.0,
             ),
         )

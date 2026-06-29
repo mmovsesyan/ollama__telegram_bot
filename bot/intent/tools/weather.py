@@ -20,6 +20,29 @@ _DAYS_RE = re.compile(
 )
 
 
+def extract_city(text: str) -> str | None:
+    """Pull the city out of weather queries like 'погода в Москве'."""
+    if not text:
+        return None
+    weather_text = re.sub(
+        r"\b(?:прогноз\w*\s+)?(?:погод\w*|weather|температур\w*|прогноз\w*|forecast)\b",
+        "WX",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    m = re.search(
+        r"WX\s*(?:в|in|для|по|for)?\s*([\wа-яА-ЯёЁ\-]+)?",
+        weather_text,
+    )
+    if not m:
+        return None
+    city = (m.group(1) or "").strip()
+    if city.lower() in {"на", "по", "для", "в", "с", "за", "и", "the", "a", "in", "for"}:
+        return None
+    return city.capitalize() or None
+
+
 def _detect_days(text: str) -> int | None:
     """Pull a day-count out of phrases like 'на 5 дней', '3 дня', 'next 3 days'.
     Returns None if no explicit number was given."""
